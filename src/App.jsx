@@ -90,7 +90,7 @@ export default function App() {
     const saved = localStorage.getItem("cleanstore_store_info");
     return saved ? JSON.parse(saved) : {
       name: "Clean Store",
-
+      slogan: "جودة - توفير ",
       taxRate: 14
     };
   });
@@ -99,9 +99,33 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("pos"); // "pos" | "inventory" | "financials" | "partners" | "settings"
   const [cart, setCart] = useState([]); // Shared cart state
 
-  // PWA Install Prompt State
+  // PWA Install Prompt & Standalone Mode State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
   const [isInstallable, setIsInstallable] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(() => {
+    return Boolean(window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone);
+  });
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(display-mode: standalone)");
+    const handleChange = (e) => {
+      setIsStandalone(e.matches || window.navigator.standalone);
+    };
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", handleChange);
+    } else if (mediaQuery.addListener) {
+      mediaQuery.addListener(handleChange);
+    }
+
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else if (mediaQuery.removeListener) {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, []);
 
   // Sync state modifications to localStorage
   useEffect(() => {
@@ -404,15 +428,17 @@ export default function App() {
 
           {/* Logo & Store Info */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-teal-600 flex items-center justify-center text-white shadow-md shadow-teal-100 shrink-0">
-              <Sparkles size={20} />
-            </div>
+            <img
+              src="/icons/icon-192.png"
+              alt="Clean Store Logo"
+              className="w-10 h-10 rounded-2xl object-cover shadow-md shadow-teal-100 shrink-0 border border-teal-500/20"
+            />
             <div className="text-right">
               <h1 className="font-black text-sm md:text-base text-slate-800 tracking-wide">
                 {storeInfo.name}
               </h1>
               <p className="text-[10px] text-slate-400 font-bold">
-                {storeInfo.slogan}
+                {storeInfo.slogan || "جودة - توفير"}
               </p>
             </div>
           </div>
@@ -433,16 +459,19 @@ export default function App() {
               </span>
             </div>
 
-            {/* In-App PWA Install Button */}
-            <button
-              type="button"
-              onClick={handleInstallClick}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-xl text-[11px] font-black transition-colors cursor-pointer"
-              title="تثبيت كتطبيق على جهازك للعمل بدون إنترنت"
-            >
-              <Download size={13} />
-              <span>تثبيت التطبيق</span>
-            </button>
+            {/* In-App PWA Install Button (Hidden in Standalone Mode) */}
+            {!isStandalone && (
+              <button
+                type="button"
+                id="install-btn"
+                onClick={handleInstallClick}
+                className="install-app-btn inline-flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-xl text-[11px] font-black transition-colors cursor-pointer"
+                title="تثبيت كتطبيق على جهازك للعمل بدون إنترنت"
+              >
+                <Download size={13} />
+                <span>تثبيت التطبيق</span>
+              </button>
+            )}
 
             {/* Logout Button */}
             <button
@@ -705,8 +734,19 @@ export default function App() {
 
       </div>
 
-
-
+      {/* APPLICATION FOOTER */}
+      <footer className="w-full bg-white border-t border-slate-100 py-3 px-4 text-center mt-auto print:hidden">
+        <div className="max-w-7xl mx-auto flex items-center justify-center gap-2 text-xs text-slate-500 font-semibold">
+          <img
+            src="/icons/icon-192.png"
+            alt="Clean Store Logo"
+            className="w-5 h-5 rounded-md object-cover border border-teal-500/20 shadow-xs"
+          />
+          <span className="font-bold text-slate-700">{storeInfo.name}</span>
+          <span className="text-slate-300">•</span>
+          <span>{storeInfo.slogan || "جودة - توفير "}</span>
+        </div>
+      </footer>
 
     </div>
   );

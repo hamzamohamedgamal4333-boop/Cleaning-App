@@ -185,14 +185,16 @@ export default function LoginScreen({ onLogin }) {
 
           {/* Header of the Screen (Centered Store Logo and Name) */}
           <div className="flex flex-col items-center text-center mb-6 pt-2">
-            <div className="w-14 h-14 rounded-2xl bg-teal-600 text-white flex items-center justify-center shadow-md shadow-teal-100 mb-3 border border-teal-500/20">
-              <Sparkles size={28} className="text-white" />
-            </div>
+            <img
+              src="/icons/icon-192.png"
+              alt="Clean Store Logo"
+              className="w-14 h-14 rounded-2xl object-cover shadow-md shadow-teal-100 mb-3 border border-teal-500/20"
+            />
             <h1 className="text-xl md:text-2xl font-black tracking-tight text-slate-800">
-              Clean store
+              Clean Store
             </h1>
             <p className="text-xs text-slate-400 font-semibold mt-1">
-              جودة - توفير
+              جودة - توفير - أمان للأسرة
             </p>
           </div>
 

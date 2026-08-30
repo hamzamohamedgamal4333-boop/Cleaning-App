@@ -91,3 +91,11 @@
     margin: 0;
   }
 }
+
+/* Standalone PWA Fallback Rule */
+@media all and (display-mode: standalone) {
+  .install-app-btn, #install-btn {
+    display: none !important;
+  }
+}
+
