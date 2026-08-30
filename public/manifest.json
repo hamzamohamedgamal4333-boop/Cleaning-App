@@ -1,0 +1,17 @@
+{
+  "short_name": "منظفات POS",
+  "name": "نظام إدارة ونقاط بيع المنظفات والمنظفات الكيميائية",
+  "description": "برنامج سحابي لإدارة مبيعات ومخازن ومصروفات وأرباح محل المنظفات مع دعم الشركاء",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#f8fafc",
+  "theme_color": "#0d9488",
+  "display": "standalone",
+  "orientation": "any"
+}
