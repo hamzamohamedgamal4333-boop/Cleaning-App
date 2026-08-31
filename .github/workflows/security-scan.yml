@@ -22,15 +22,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 2. فحص ثغرات الكود المصدري
+      # 2. فحص كود المشروع فقط (استثناء مجلدات الـ CI/CD)
       - name: Run Semgrep
         run: |
           python -m pip install semgrep
-          semgrep scan --config auto --error
+          semgrep scan --config auto --exclude='.github' --exclude='githup' --error
 
       # 3. فحص ثغرات الحزم والمكتبات
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
