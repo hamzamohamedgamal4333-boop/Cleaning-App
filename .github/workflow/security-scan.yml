@@ -1,0 +1,38 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  security-audit:
+    name: Run Security Tools
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. فحص تسريب المفاتيح وكلمات المرور
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. فحص ثغرات الكود المصدري
+      - name: Run Semgrep
+        run: |
+          python -m pip install semgrep
+          semgrep scan --config auto --error
+
+      # 3. فحص ثغرات الحزم والمكتبات
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
