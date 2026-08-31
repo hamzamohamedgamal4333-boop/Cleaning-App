@@ -194,7 +194,7 @@ export default function LoginScreen({ onLogin }) {
               Clean Store
             </h1>
             <p className="text-xs text-slate-400 font-semibold mt-1">
-              جودة - توفير - أمان للأسرة
+              جودة - توفير
             </p>
           </div>
 
