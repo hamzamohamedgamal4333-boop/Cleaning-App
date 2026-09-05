@@ -8,36 +8,44 @@ import {
   AlertCircle,
   CheckCircle2,
   LogIn,
-  UserPlus,
   Loader2,
-  MoreVertical,
-  Trash2,
-  ArrowRight,
-  ShieldCheck
+  ShieldCheck,
+  Store,
+  UserCheck,
+  CheckSquare
 } from "lucide-react";
 import {
   getStoredUsers,
-  registerStoreOwner,
-  registerUser,
-  resetAppForClient
+  hasStoreOwner,
+  registerFirstOwner,
+  authenticateUser
 } from "../utils/authStorage";
 
 export default function LoginScreen({ onLogin }) {
-  // 1. Fetch registered users from localStorage
+  // 1. Check if owner exists in localStorage (clean_store_users / store_users)
+  const [ownerExists, setOwnerExists] = useState(() => hasStoreOwner());
   const [users, setUsers] = useState(() => getStoredUsers(false));
 
-  // Mode: Show account card switcher if users exist, or create new account form
-  const [isCreatingNewAccount, setIsCreatingNewAccount] = useState(() => users.length === 0);
+  // Mode: If no owner exists -> force "First-Time Setup Flow"
+  // If owner exists -> ONLY Login flow (NO public registration button)
+  const isFirstTimeSetup = !ownerExists;
 
-  // Dropdown menu state (3 dots icon)
-  const [showMenu, setShowMenu] = useState(false);
+  // Selected User Card for Password Login (if clicking a card)
+  const [selectedUserCard, setSelectedUserCard] = useState(null);
 
-  // Register Form States ("إنشاء حساب جديد")
-  const [signUpIdentifier, setSignUpIdentifier] = useState("");
-  const [signUpPassword, setSignUpPassword] = useState("");
-  const [signUpConfirmPassword, setSignUpConfirmPassword] = useState("");
-  const [showSignUpPassword, setShowSignUpPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  // Form States: First Time Setup ("إنشاء حساب مالك المتجر لأول مرة")
+  const [setupStoreName, setSetupStoreName] = useState("Clean Store");
+  const [setupOwnerFullName, setSetupOwnerFullName] = useState("");
+  const [setupUsername, setSetupUsername] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState("");
+  const [showSetupPassword, setShowSetupPassword] = useState(false);
+  const [showSetupConfirmPassword, setShowSetupConfirmPassword] = useState(false);
+
+  // Form States: Normal Login ("تسجيل الدخول")
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // Feedback & Loading States
   const [error, setError] = useState("");
@@ -61,69 +69,55 @@ export default function LoginScreen({ onLogin }) {
     return name.slice(0, 2).toUpperCase();
   };
 
-  // 1. Handle "إزالة هذا الحساب من الجهاز" (Remove Account)
-  const handleRemoveAccount = () => {
-    setShowMenu(false);
-    setError("");
-    setSuccessMessage("");
-
-    // Delete user profile and session completely from localStorage
-    resetAppForClient();
-    setUsers([]);
-    setIsCreatingNewAccount(true);
-    setSuccessMessage("تمت إزالة الحساب من الجهاز بنجاح. يمكنك الآن إنشاء حساب جديد.");
-  };
-
-  // 2. Handle Direct Account Card Login
-  const handleDirectAccountLogin = (user) => {
-    onLogin(user);
-  };
-
-  // 3. Handle "إنشاء حساب جديد" Form Submit
-  const handleSignUpSubmit = (e) => {
+  // Handle First-Time Store Setup Submission
+  const handleFirstTimeSetupSubmit = (e) => {
     e.preventDefault();
     setError("");
     setSuccessMessage("");
 
-    const cleanId = signUpIdentifier.trim();
-    if (!cleanId) {
-      triggerError("يرجى إدخال اسم المستخدم أو البريد الإلكتروني.");
+    const cleanStore = setupStoreName.trim();
+    const cleanOwnerName = setupOwnerFullName.trim();
+    const cleanUser = setupUsername.trim();
+    const cleanPass = setupPassword.trim();
+
+    if (!cleanStore) {
+      triggerError("يرجى إدخال اسم المتجر.");
       return;
     }
-    if (signUpPassword.length < 4) {
+    if (!cleanOwnerName) {
+      triggerError("يرجى إدخال الاسم الكامل لمالك المتجر.");
+      return;
+    }
+    if (!cleanUser) {
+      triggerError("يرجى إدخال اسم المستخدم لمالك المتجر.");
+      return;
+    }
+    if (cleanPass.length < 4) {
       triggerError("كلمة المرور يجب أن تتكون من 4 أحرف أو أرقام على الأقل.");
       return;
     }
-    if (signUpPassword !== signUpConfirmPassword) {
+    if (cleanPass !== setupConfirmPassword.trim()) {
       triggerError("كلمة المرور وتأكيد كلمة المرور غير متطابقين.");
       return;
     }
 
     setLoading(true);
+
     setTimeout(() => {
-      let result;
-      // If no users exist, register as store owner admin
-      if (users.length === 0) {
-        result = registerStoreOwner({
-          username: cleanId,
-          password: signUpPassword
-        });
-      } else {
-        // Register new user account
-        result = registerUser({
-          username: cleanId,
-          fullName: cleanId,
-          password: signUpPassword,
-          role: "cashier"
-        });
-      }
+      const result = registerFirstOwner({
+        storeName: cleanStore,
+        ownerFullName: cleanOwnerName,
+        username: cleanUser,
+        password: cleanPass
+      });
 
       setLoading(false);
 
       if (!result.success) {
-        triggerError(result.error || "حدث خطأ أثناء إنشاء الحساب.");
+        triggerError(result.error || "حدث خطأ أثناء إنشاء حساب المالك.");
       } else {
-        setSuccessMessage("تم إنشاء الحساب بنجاح! جاري التوجيه إلى لوحة التحكم...");
+        setSuccessMessage("تم إنشاء حساب مالك المتجر بنجاح! جاري التوجيه إلى التطبيق...");
+        setOwnerExists(true);
         setTimeout(() => {
           onLogin(result.user);
         }, 500);
@@ -131,13 +125,52 @@ export default function LoginScreen({ onLogin }) {
     }, 400);
   };
 
-  // Current primary user profile to show on account card (if available)
-  const primaryUser = users.length > 0 ? users[0] : null;
+  // Handle Credentials Login Submit (Existing Accounts)
+  const handleLoginSubmit = (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccessMessage("");
+
+    const cleanId = loginIdentifier.trim();
+    const cleanPass = loginPassword.trim();
+
+    if (!cleanId) {
+      triggerError("يرجى إدخال اسم المستخدم أو البريد الإلكتروني.");
+      return;
+    }
+    if (!cleanPass) {
+      triggerError("يرجى إدخال كلمة المرور.");
+      return;
+    }
+
+    setLoading(true);
+
+    setTimeout(() => {
+      const result = authenticateUser(cleanId, cleanPass);
+      setLoading(false);
+
+      if (!result.success) {
+        triggerError(result.error || "بيانات الدخول غير صحيحة.");
+      } else {
+        setSuccessMessage(`أهلاً بك مجدداً ${result.user.fullName || result.user.username}!`);
+        setTimeout(() => {
+          onLogin(result.user);
+        }, 300);
+      }
+    }, 300);
+  };
+
+  // Quick Card Select Click
+  const handleCardClick = (user) => {
+    setLoginIdentifier(user.username);
+    setSelectedUserCard(user);
+    setError("");
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center p-4 selection:bg-teal-500 selection:text-white font-['Cairo'] relative dir-rtl" dir="rtl">
 
-      {/* Soft Ambient Background Decoration */}
+      {/* Ambient Background Gradient */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-teal-500/5 rounded-full blur-3xl"></div>
         <div className="absolute bottom-1/4 left-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl"></div>
@@ -145,46 +178,11 @@ export default function LoginScreen({ onLogin }) {
 
       <div className="relative z-10 w-full max-w-md flex flex-col items-center">
 
-        {/* Clean Light Card Container matching app colors */}
+        {/* Light Card Container */}
         <div className="w-full bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col relative">
 
-          {/* Top-Left Corner: Three-Dots Menu (•••) */}
-          <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-30">
-            <button
-              type="button"
-              onClick={() => setShowMenu(!showMenu)}
-              className="w-9 h-9 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-              title="خيارات الحساب"
-              aria-label="خيارات الحساب"
-            >
-              <MoreVertical size={20} />
-            </button>
-
-            {/* Dropdown Menu */}
-            {showMenu && (
-              <>
-                {/* Backdrop to close dropdown on click outside */}
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setShowMenu(false)}
-                />
-
-                <div className="absolute left-0 mt-1 w-56 bg-white border border-slate-100 rounded-2xl shadow-xl z-50 py-1.5 text-right animate-in fade-in zoom-in-95 duration-100">
-                  <button
-                    type="button"
-                    onClick={handleRemoveAccount}
-                    className="w-full text-right px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 flex items-center justify-between transition-colors cursor-pointer"
-                  >
-                    <span>إزالة هذا الحساب من الجهاز</span>
-                    <Trash2 size={15} className="shrink-0 text-rose-500" />
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Header of the Screen (Centered Store Logo and Name) */}
-          <div className="flex flex-col items-center text-center mb-6 pt-2">
+          {/* Header (Logo & Store Info) */}
+          <div className="flex flex-col items-center text-center mb-6">
             <img
               src="/icons/icon-192.png"
               alt="Clean Store Logo"
@@ -194,11 +192,11 @@ export default function LoginScreen({ onLogin }) {
               Clean Store
             </h1>
             <p className="text-xs text-slate-400 font-semibold mt-1">
-              جودة - توفير
+              نظام إدارة المبيعات والمخازن المتكامل
             </p>
           </div>
 
-          {/* Feedback Messages Banner */}
+          {/* Feedback Banners */}
           {error && (
             <div className={`mb-4 p-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl flex items-center gap-2.5 text-xs font-bold ${shake ? "animate-bounce" : ""}`}>
               <AlertCircle size={18} className="text-rose-500 shrink-0" />
@@ -213,91 +211,47 @@ export default function LoginScreen({ onLogin }) {
             </div>
           )}
 
-          {/* BODY & BOTTOM OF THE SCREEN */}
-          {!isCreatingNewAccount && primaryUser ? (
-            /* MODE 1: LOGGED-OUT USER ACCOUNT CARD VIEW */
+          {/* MODE 1: FIRST TIME STORE SETUP FLOW (No Owner Account Exists) */}
+          {isFirstTimeSetup ? (
             <div className="flex flex-col space-y-4">
-
-              <p className="text-center text-xs font-bold text-slate-400 mb-1">
-                انقر على الحساب أدناه لتبديل الحساب والدخول مباشرة
-              </p>
-
-              {/* Account Card showing the logged-out user */}
-              {users.map((u) => (
-                <div
-                  key={u.id || u.username}
-                  onClick={() => handleDirectAccountLogin(u)}
-                  className="w-full bg-slate-50 hover:bg-teal-50/60 border border-slate-200 hover:border-teal-400 rounded-2xl p-4 transition-all duration-200 cursor-pointer flex items-center gap-4 group shadow-sm hover:shadow-md"
-                >
-                  {/* Circular Avatar / Icon */}
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-teal-600 to-emerald-500 text-white flex items-center justify-center font-black text-sm shadow-sm group-hover:scale-105 transition-transform shrink-0">
-                    {getUserInitials(u.fullName || u.username)}
-                  </div>
-
-                  {/* User Name & Details */}
-                  <div className="flex-1 text-right">
-                    <h3 className="font-black text-slate-800 text-sm md:text-base group-hover:text-teal-700 transition-colors">
-                      {u.fullName || u.name || u.username}
-                    </h3>
-                    <p className="text-[11px] text-slate-400 font-semibold mt-0.5 flex items-center gap-1">
-                      <span>{u.role === "admin" ? "مدير النظام" : "كاشير المبيعات"}</span>
-                      <span>•</span>
-                      <span className="text-teal-600 font-bold">دخول مباشر</span>
-                    </p>
-                  </div>
-
-                  {/* Direct Login Action Button Icon */}
-                  <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 group-hover:border-teal-400 group-hover:bg-teal-600 text-slate-400 group-hover:text-white flex items-center justify-center transition-all shrink-0">
-                    <LogIn size={16} />
-                  </div>
+              <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 text-center">
+                <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center mx-auto mb-2 shadow-md shadow-teal-100">
+                  <ShieldCheck size={22} />
                 </div>
-              ))}
-
-              {/* Bottom of the Screen: "إنشاء حساب جديد" Button */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCreatingNewAccount(true)}
-                  className="w-full py-3.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-sm rounded-2xl shadow-lg shadow-teal-100 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <UserPlus size={18} />
-                  <span>إنشاء حساب جديد</span>
-                </button>
-              </div>
-
-            </div>
-          ) : (
-            /* MODE 2: "إنشاء حساب جديد" FORM VIEW */
-            <div className="flex flex-col space-y-4">
-
-              {/* If users exist, allow returning back to Account Switcher */}
-              {users.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setIsCreatingNewAccount(false)}
-                  className="text-xs text-teal-600 hover:text-teal-700 font-bold flex items-center gap-1 self-start cursor-pointer transition-colors mb-1"
-                >
-                  <ArrowRight size={14} />
-                  <span>العودة لإنشاء الدخول بالحساب المسجل</span>
-                </button>
-              )}
-
-              <div className="border-b border-slate-100 pb-3 text-center">
-                <h2 className="text-base font-black text-slate-800 flex items-center justify-center gap-2">
-                  <UserPlus size={18} className="text-teal-600" />
-                  <span>إنشاء حساب جديد</span>
+                <h2 className="text-sm md:text-base font-black text-teal-950">
+                  إنشاء حساب مالك المتجر لأول مرة
                 </h2>
-                <p className="text-[11px] text-slate-400 font-semibold mt-1">
-                  أدخل اسم المستخدم وكلمة المرور لإنشاء الحساب الجديد
+                <p className="text-[11px] text-teal-700 font-semibold mt-1">
+                  أهلاً بك! يرجى إدخال اسم المتجر وبيانات المالك الرئيسي للبدء في استخدام التطبيق
                 </p>
               </div>
 
-              <form onSubmit={handleSignUpSubmit} className="space-y-4">
+              <form onSubmit={handleFirstTimeSetupSubmit} className="space-y-3.5">
 
-                {/* Username or Email */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-600 text-right">
-                    اسم المستخدم أو البريد الإلكتروني:
+                {/* 1. Store Name */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
+                    اسم المتجر / المحل:
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute right-3.5 text-slate-400 pointer-events-none">
+                      <Store size={16} />
+                    </div>
+                    <input
+                      type="text"
+                      value={setupStoreName}
+                      onChange={(e) => setSetupStoreName(e.target.value)}
+                      placeholder="مثال: Clean Store للمنظفات"
+                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all text-right"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* 2. Owner Full Name */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
+                    الاسم الكامل لمالك المتجر:
                   </label>
                   <div className="relative flex items-center">
                     <div className="absolute right-3.5 text-slate-400 pointer-events-none">
@@ -305,18 +259,38 @@ export default function LoginScreen({ onLogin }) {
                     </div>
                     <input
                       type="text"
-                      value={signUpIdentifier}
-                      onChange={(e) => setSignUpIdentifier(e.target.value)}
-                      placeholder="أدخل اسم المستخدم أو البريد"
-                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all placeholder:text-slate-400 text-right"
+                      value={setupOwnerFullName}
+                      onChange={(e) => setSetupOwnerFullName(e.target.value)}
+                      placeholder="مثال: أحمد محمد علي"
+                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all text-right"
                       required
                     />
                   </div>
                 </div>
 
-                {/* Password */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-600 text-right">
+                {/* 3. Username */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
+                    اسم المستخدم للدخول:
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute right-3.5 text-slate-400 pointer-events-none">
+                      <UserCheck size={16} />
+                    </div>
+                    <input
+                      type="text"
+                      value={setupUsername}
+                      onChange={(e) => setSetupUsername(e.target.value)}
+                      placeholder="مثال: admin"
+                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all font-mono text-right"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* 4. Password */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
                     كلمة المرور:
                   </label>
                   <div className="relative flex items-center">
@@ -324,27 +298,26 @@ export default function LoginScreen({ onLogin }) {
                       <Lock size={16} />
                     </div>
                     <input
-                      type={showSignUpPassword ? "text" : "password"}
-                      value={signUpPassword}
-                      onChange={(e) => setSignUpPassword(e.target.value)}
+                      type={showSetupPassword ? "text" : "password"}
+                      value={setupPassword}
+                      onChange={(e) => setSetupPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all placeholder:text-slate-400 text-right"
+                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all font-mono text-right"
                       required
                     />
                     <button
                       type="button"
-                      onClick={() => setShowSignUpPassword(!showSignUpPassword)}
+                      onClick={() => setShowSetupPassword(!showSetupPassword)}
                       className="absolute left-3.5 text-slate-400 hover:text-teal-600 transition-colors cursor-pointer"
-                      title={showSignUpPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
                     >
-                      {showSignUpPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showSetupPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
 
-                {/* Confirm Password */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-600 text-right">
+                {/* 5. Confirm Password */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
                     تأكيد كلمة المرور:
                   </label>
                   <div className="relative flex items-center">
@@ -352,25 +325,24 @@ export default function LoginScreen({ onLogin }) {
                       <Lock size={16} />
                     </div>
                     <input
-                      type={showConfirmPassword ? "text" : "password"}
-                      value={signUpConfirmPassword}
-                      onChange={(e) => setSignUpConfirmPassword(e.target.value)}
+                      type={showSetupConfirmPassword ? "text" : "password"}
+                      value={setupConfirmPassword}
+                      onChange={(e) => setSetupConfirmPassword(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all placeholder:text-slate-400 text-right"
+                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all font-mono text-right"
                       required
                     />
                     <button
                       type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      onClick={() => setShowSetupConfirmPassword(!showSetupConfirmPassword)}
                       className="absolute left-3.5 text-slate-400 hover:text-teal-600 transition-colors cursor-pointer"
-                      title={showConfirmPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
                     >
-                      {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      {showSetupConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
 
-                {/* Action Button: "إنشاء حساب جديد" */}
+                {/* Create Owner Submit Button */}
                 <button
                   type="submit"
                   disabled={loading}
@@ -379,17 +351,153 @@ export default function LoginScreen({ onLogin }) {
                   {loading ? (
                     <>
                       <Loader2 size={18} className="animate-spin text-white" />
-                      <span>جاري إنشاء الحساب...</span>
+                      <span>جاري إنشاء حساب المالك...</span>
                     </>
                   ) : (
                     <>
-                      <UserPlus size={18} />
-                      <span>إنشاء حساب جديد</span>
+                      <ShieldCheck size={18} />
+                      <span>حفظ وإنشاء حساب المالك</span>
                     </>
                   )}
                 </button>
 
               </form>
+            </div>
+          ) : (
+            /* MODE 2: EXISTING ACCOUNTS LOGIN ONLY (NO public registration button!) */
+            <div className="flex flex-col space-y-4">
+
+              <div className="border-b border-slate-100 pb-3 text-center">
+                <h2 className="text-base font-black text-slate-800 flex items-center justify-center gap-2">
+                  <LogIn size={18} className="text-teal-600" />
+                  <span>تسجيل الدخول للنظام</span>
+                </h2>
+                <p className="text-[11px] text-slate-400 font-semibold mt-1">
+                  اختر حسابك أو أدخل اسم المستخدم وكلمة المرور للدخول
+                </p>
+              </div>
+
+              {/* Registered Accounts Cards Carousel / List */}
+              {users.length > 0 && (
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  <p className="text-[11px] font-bold text-slate-400 text-right">الحسابات المسجلة بالمحل:</p>
+                  {users.map((u) => {
+                    const isOwnerRole = u.role === "owner" || u.role === "admin";
+                    const isSelected = selectedUserCard && selectedUserCard.id === u.id;
+
+                    return (
+                      <div
+                        key={u.id || u.username}
+                        onClick={() => handleCardClick(u)}
+                        className={`w-full p-3 rounded-2xl border transition-all duration-200 cursor-pointer flex items-center gap-3 ${isSelected
+                          ? "bg-teal-50/80 border-teal-500 shadow-sm"
+                          : "bg-slate-50 hover:bg-teal-50/40 border-slate-200 hover:border-teal-300"
+                          }`}
+                      >
+                        {/* Avatar */}
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs text-white shrink-0 shadow-xs ${isOwnerRole ? "bg-gradient-to-tr from-teal-600 to-emerald-500" : "bg-gradient-to-tr from-cyan-600 to-sky-500"
+                          }`}>
+                          {getUserInitials(u.fullName || u.username)}
+                        </div>
+
+                        {/* Name & Role */}
+                        <div className="flex-1 text-right">
+                          <div className="font-black text-xs text-slate-800">
+                            {u.fullName || u.username}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-semibold mt-0.5 flex items-center gap-1">
+                            <span>{isOwnerRole ? "مالك / شريك" : "كاشير / موظف"}</span>
+                            <span>•</span>
+                            <span className="font-mono text-slate-500">@{u.username}</span>
+                          </div>
+                        </div>
+
+                        {/* Selection check */}
+                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${isSelected ? "bg-teal-600 text-white" : "bg-white text-slate-300 border border-slate-200"
+                          }`}>
+                          {isSelected ? <CheckSquare size={14} /> : <User size={14} />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Login Credentials Form */}
+              <form onSubmit={handleLoginSubmit} className="space-y-3.5 pt-1">
+
+                {/* Username */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-600 text-right">
+                    اسم المستخدم:
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute right-3.5 text-slate-400 pointer-events-none">
+                      <User size={16} />
+                    </div>
+                    <input
+                      type="text"
+                      value={loginIdentifier}
+                      onChange={(e) => setLoginIdentifier(e.target.value)}
+                      placeholder="أدخل اسم المستخدم"
+                      className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all font-mono text-right"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Password */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-bold text-slate-600 text-right">
+                    كلمة المرور:
+                  </label>
+                  <div className="relative flex items-center">
+                    <div className="absolute right-3.5 text-slate-400 pointer-events-none">
+                      <Lock size={16} />
+                    </div>
+                    <input
+                      type={showLoginPassword ? "text" : "password"}
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all font-mono text-right"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      className="absolute left-3.5 text-slate-400 hover:text-teal-600 transition-colors cursor-pointer"
+                    >
+                      {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Login Button */}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3.5 bg-teal-600 hover:bg-teal-700 text-white font-black text-sm rounded-2xl shadow-lg shadow-teal-100 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-60"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin text-white" />
+                      <span>جاري تسجيل الدخول...</span>
+                    </>
+                  ) : (
+                    <>
+                      <LogIn size={18} />
+                      <span>تسجيل الدخول</span>
+                    </>
+                  )}
+                </button>
+
+              </form>
+
+              {/* Security Note - Public Sign Up is HIDDEN and DISABLED */}
+              <div className="pt-2 text-center text-[10px] text-slate-400 font-semibold">
+                🔒 الحسابات تُدار حصرياً من قبل مالك المتجر في قسم الإعدادات.
+              </div>
 
             </div>
           )}
@@ -400,3 +508,4 @@ export default function LoginScreen({ onLogin }) {
     </div>
   );
 }
+

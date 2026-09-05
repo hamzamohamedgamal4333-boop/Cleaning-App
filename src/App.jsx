@@ -1,18 +1,14 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   ShoppingCart,
   Package,
   TrendingUp,
   Users,
   Settings,
-  Sparkles,
-  AlertTriangle,
-  Clock,
-  LogOut,
-  Download,
   ShieldCheck,
   UserCheck,
-  RotateCcw
+  Download,
+  LogOut
 } from "lucide-react";
 
 // Import custom components
@@ -40,6 +36,7 @@ import {
   updateStoredUser,
   deleteStoredUser,
   deleteSelfAccount,
+  resetAppForHandover,
   resetAppForClient,
   getActiveSession,
   setActiveSession,
@@ -50,10 +47,10 @@ export default function App() {
   // 1. Authentication State (Active Session persistent across refreshes)
   const [currentUser, setCurrentUser] = useState(() => getActiveSession());
 
-  // 1.1 Registered Users List from LocalStorage (store_users)
+  // 1.1 Registered Users List from LocalStorage (clean_store_users)
   const [users, setUsers] = useState(() => getStoredUsers());
 
-  // 2. Global Persistent State (Default to empty arrays for clean start as requested)
+  // 2. Global Persistent State
   const [products, setProducts] = useState(() => {
     const saved = localStorage.getItem("cleanstore_products");
     return saved ? JSON.parse(saved) : [];
@@ -90,14 +87,14 @@ export default function App() {
     const saved = localStorage.getItem("cleanstore_store_info");
     return saved ? JSON.parse(saved) : {
       name: "Clean Store",
-      slogan: "جودة - توفير ",
+      slogan: "جودة - توفير",
       taxRate: 14
     };
   });
 
   // Local UI States
-  const [activeTab, setActiveTab] = useState("pos"); // "pos" | "inventory" | "financials" | "partners" | "settings"
-  const [cart, setCart] = useState([]); // Shared cart state
+  const [activeTab, setActiveTab] = useState("pos");
+  const [cart, setCart] = useState([]);
 
   // PWA Install Prompt & Standalone Mode State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -105,6 +102,27 @@ export default function App() {
   const [isStandalone, setIsStandalone] = useState(() => {
     return Boolean(window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone);
   });
+
+  // Determine if logged-in user is Owner (permanent unrestricted access)
+  const isOwner = currentUser?.role === "owner" || currentUser?.role === "admin";
+
+  // Calculate allowed navbar tabs dynamically based on user permissions
+  const userAllowedTabs = useMemo(() => {
+    if (!currentUser) return ["pos"];
+    if (isOwner) return ["pos", "inventory", "financials", "partners", "settings"];
+
+    const rawPerms = Array.isArray(currentUser.permissions) ? currentUser.permissions : ["pos"];
+    // Cashiers should NEVER see settings
+    const filtered = rawPerms.filter(p => p !== "settings");
+    return filtered.length > 0 ? filtered : ["pos"];
+  }, [currentUser, isOwner]);
+
+  // Sync active tab to first allowed tab if currently on an unauthorized tab
+  useEffect(() => {
+    if (currentUser && !userAllowedTabs.includes(activeTab)) {
+      setActiveTab(userAllowedTabs[0] || "pos");
+    }
+  }, [currentUser, userAllowedTabs, activeTab]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(display-mode: standalone)");
@@ -156,7 +174,7 @@ export default function App() {
     localStorage.setItem("cleanstore_store_info", JSON.stringify(storeInfo));
   }, [storeInfo]);
 
-  // Sync registered users to localStorage (store_users)
+  // Sync registered users to localStorage
   useEffect(() => {
     saveStoredUsers(users);
   }, [users]);
@@ -194,14 +212,17 @@ export default function App() {
     setDeferredPrompt(null);
   };
 
-  // Authentication Handlers (Active Session persists across page refreshes)
+  // Authentication Handlers
   const handleLogin = (user) => {
     setCurrentUser(user);
     setActiveSession(user, true);
-    // If cashier, enforce pos tab
-    if (user.role === "cashier") {
-      setActiveTab("pos");
-    }
+    setUsers(getStoredUsers(false));
+    const userIsOwner = user.role === "owner" || user.role === "admin";
+    const allowed = userIsOwner
+      ? ["pos", "inventory", "financials", "partners", "settings"]
+      : (Array.isArray(user.permissions) ? user.permissions.filter(p => p !== "settings") : ["pos"]);
+    const targetTab = allowed.includes("pos") ? "pos" : (allowed[0] || "pos");
+    setActiveTab(targetTab);
   };
 
   const handleLogout = () => {
@@ -216,27 +237,36 @@ export default function App() {
     if (res.success) {
       setCurrentUser(null);
       clearActiveSession();
-      setUsers(getStoredUsers(false));
+      setUsers([]);
       setActiveTab("pos");
     }
     return res;
   };
 
-  const handleClientReset = () => {
-    const confirmReset = window.confirm(
-      "هل أنت متأكد من حذف الحساب وتجهيز البرنامج للمالك الجديد؟"
-    );
-    if (confirmReset) {
-      resetAppForClient();
-      setCurrentUser(null);
-      setUsers([]);
-      setActiveTab("pos");
-    }
+  // Developer Reset Tool for Handover (تهيئة التطبيق للتسليم للعميل)
+  const handleHandoverReset = () => {
+    resetAppForHandover();
+    setCurrentUser(null);
+    setUsers([]);
+    setProducts([]);
+    setSales([]);
+    setExpenses([]);
+    setPurchases([]);
+    setPartners([
+      { id: "part-1", name: "الشريك الأساسي (المدير)", capitalShare: 50000, profitPercentage: 100 }
+    ]);
+    setWithdrawals([]);
+    setCart([]);
+    setStoreInfo({
+      name: "Clean Store",
+      slogan: "جودة - توفير",
+      taxRate: 14
+    });
+    setActiveTab("pos");
   };
 
   // Actions for Sales & Inventory Stock Deductions
   const handleCheckout = (newSale) => {
-    // 1. Enrich sale record with logged-in cashier details
     const enrichedSale = {
       ...newSale,
       cashier: newSale.cashier || currentUser?.fullName || currentUser?.name || "كاشير المبيعات",
@@ -246,7 +276,6 @@ export default function App() {
 
     setSales(prevSales => [enrichedSale, ...prevSales]);
 
-    // 2. Auto-deduct quantities from inventory products
     setProducts(prevProducts => {
       return prevProducts.map(prod => {
         const soldItem = enrichedSale.items.find(item => item.id === prod.id);
@@ -277,12 +306,10 @@ export default function App() {
     setProducts(prev => prev.filter(p => p.id !== id));
   };
 
-  // Handle Recording a Purchase Invoice (تسجيل فاتورة توريد / مشتريات)
   const handleAddPurchase = (purchaseData) => {
     const userLabel = currentUser?.fullName || currentUser?.name || "المدير المسؤول";
     const dateStr = purchaseData.date || new Date().toISOString().split("T")[0];
 
-    // 1. Create Purchase Invoice Record
     const newPurchase = {
       ...purchaseData,
       id: "purch-" + Date.now(),
@@ -292,7 +319,6 @@ export default function App() {
 
     setPurchases(prev => [newPurchase, ...prev]);
 
-    // 2. Automatically increase product's available stock & update unit cost price if modified
     setProducts(prevProducts =>
       prevProducts.map(p => {
         if (p.id === purchaseData.productId) {
@@ -313,7 +339,6 @@ export default function App() {
       })
     );
 
-    // 3. Record purchase in Financials/Expenses ledger as cost of inventory
     const supplierText = purchaseData.supplier ? ` (المورد: ${purchaseData.supplier})` : "";
     const newExpense = {
       id: "exp-purch-" + Date.now(),
@@ -326,7 +351,6 @@ export default function App() {
     setExpenses(prev => [newExpense, ...prev]);
   };
 
-  // Handle Stock Adjustment (تسوية جرد / تالف)
   const handleStockAdjustment = ({ productId, newStock, type, reasonNote }) => {
     const userLabel = currentUser?.fullName || currentUser?.name || "المدير المسؤول";
 
@@ -346,7 +370,6 @@ export default function App() {
     );
   };
 
-  // Actions for Operational Expenses
   const handleAddExpense = (newExpense) => {
     setExpenses(prev => [newExpense, ...prev]);
   };
@@ -355,7 +378,6 @@ export default function App() {
     setExpenses(prev => prev.filter(e => e.id !== id));
   };
 
-  // Actions for Partner Profit Withdrawals
   const handleAddWithdrawal = (newWithdrawal) => {
     setWithdrawals(prev => [newWithdrawal, ...prev]);
   };
@@ -364,7 +386,6 @@ export default function App() {
     setWithdrawals(prev => prev.filter(w => w.id !== id));
   };
 
-  // Backup & Restore Actions
   const handleRestoreData = (restored) => {
     if (restored.products) setProducts(restored.products);
     if (restored.sales) setSales(restored.sales);
@@ -397,7 +418,6 @@ export default function App() {
     localStorage.removeItem("cleanstore_withdrawals");
   };
 
-  // Load Sample Demo Data
   const handleLoadSampleData = () => {
     setProducts(initialProducts);
     setSales(initialSales);
@@ -406,18 +426,13 @@ export default function App() {
     setWithdrawals(initialWithdrawals);
   };
 
-  // Stock Alert Indicators
-  const lowStockAlerts = products.filter(p => p.stock > 0 && p.stock <= p.reorderThreshold).length;
-  const outOfStockAlerts = products.filter(p => p.stock <= 0).length;
   const initialCapital = partners.reduce((sum, p) => sum + (p.capitalShare || 0), 0);
   const totalWithdrawals = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
 
-  // If user is not logged in, show Arabic Authentication screen
+  // If user is not logged in, show Arabic Login / First Time Setup screen
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
-
-  const isAdmin = currentUser.role === "admin";
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-teal-500 selection:text-white">
@@ -448,18 +463,18 @@ export default function App() {
 
             {/* Active User Role Badge */}
             <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl text-slate-700 font-bold text-[11px] border border-slate-200">
-              {isAdmin ? (
+              {isOwner ? (
                 <ShieldCheck size={14} className="text-teal-600" />
               ) : (
                 <UserCheck size={14} className="text-cyan-600" />
               )}
-              <span>{currentUser.fullName || currentUser.name || "المستخدم"}</span>
+              <span>{currentUser.fullName || currentUser.name || currentUser.username}</span>
               <span className="text-[9px] text-slate-400 font-normal">
-                ({isAdmin ? "مدير" : "كاشير"})
+                ({isOwner ? "مالك / شريك" : "كاشير / موظف"})
               </span>
             </div>
 
-            {/* In-App PWA Install Button (Hidden in Standalone Mode) */}
+            {/* In-App PWA Install Button */}
             {!isStandalone && (
               <button
                 type="button"
@@ -492,76 +507,66 @@ export default function App() {
       {/* DASHBOARD LAYOUT CONTROLLER */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex-1 w-full flex flex-col space-y-5 pb-20 md:pb-6">
 
-        {/* DESKTOP TAB NAVIGATION BAR (Filtered by Role) */}
+        {/* DESKTOP TAB NAVIGATION BAR (Filtered Dynamically by Permissions) */}
         <nav className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm hidden md:flex items-center gap-2 w-fit print:hidden">
 
-          {/* POS Tab - Accessible to both Admin & Cashier */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("pos")}
-            className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "pos"
-              ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-              : "text-slate-600 hover:bg-slate-50"
-              }`}
-          >
-            <ShoppingCart size={16} />
-            سله البيع
-          </button>
-
-          {/* Admin Restricted Tabs */}
-          {isAdmin && (
-            <>
-              <button
-                type="button"
-                onClick={() => setActiveTab("inventory")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "inventory"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <Package size={16} />
-                المخزن والمنتجات
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("financials")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "financials"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <TrendingUp size={16} />
-                المالية والمصروفات
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("partners")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "partners"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <Users size={16} />
-                حسابات الشركاء
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("settings")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "settings"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <Settings size={16} />
-                {isAdmin ? "النسخ الاحتياطي والإعدادات" : "حسابي الشخصي والإعدادات"}
-              </button>
-            </>
+          {userAllowedTabs.includes("pos") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("pos")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "pos"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <ShoppingCart size={16} />
+              سلة البيع
+            </button>
           )}
 
-          {!isAdmin && (
+          {userAllowedTabs.includes("inventory") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("inventory")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "inventory"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <Package size={16} />
+              المخزن والمنتجات
+            </button>
+          )}
+
+          {userAllowedTabs.includes("financials") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("financials")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "financials"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <TrendingUp size={16} />
+              المالية والمصروفات
+            </button>
+          )}
+
+          {userAllowedTabs.includes("partners") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("partners")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "partners"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <Users size={16} />
+              حسابات الشركاء
+            </button>
+          )}
+
+          {userAllowedTabs.includes("settings") && (
             <button
               type="button"
               onClick={() => setActiveTab("settings")}
@@ -571,7 +576,7 @@ export default function App() {
                 }`}
             >
               <Settings size={16} />
-              الإعدادات
+              النسخ الاحتياطي والإعدادات
             </button>
           )}
 
@@ -579,7 +584,7 @@ export default function App() {
 
         {/* ACTIVE TAB CONTAINER */}
         <main className="flex-1">
-          {activeTab === "pos" && (
+          {userAllowedTabs.includes("pos") && activeTab === "pos" && (
             <PosTab
               products={products}
               onCheckout={handleCheckout}
@@ -590,7 +595,7 @@ export default function App() {
             />
           )}
 
-          {isAdmin && activeTab === "inventory" && (
+          {userAllowedTabs.includes("inventory") && activeTab === "inventory" && (
             <InventoryTab
               products={products}
               purchases={purchases}
@@ -604,7 +609,7 @@ export default function App() {
             />
           )}
 
-          {isAdmin && activeTab === "financials" && (
+          {userAllowedTabs.includes("financials") && activeTab === "financials" && (
             <FinancialsTab
               sales={sales}
               expenses={expenses}
@@ -616,7 +621,7 @@ export default function App() {
             />
           )}
 
-          {isAdmin && activeTab === "partners" && (
+          {userAllowedTabs.includes("partners") && activeTab === "partners" && (
             <PartnersTab
               partners={partners}
               setPartners={setPartners}
@@ -628,7 +633,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "settings" && (
+          {userAllowedTabs.includes("settings") && activeTab === "settings" && (
             <SettingsTab
               products={products}
               sales={sales}
@@ -665,6 +670,7 @@ export default function App() {
                 return res;
               }}
               onDeleteSelfAccount={handleDeleteSelfAccount}
+              onHandoverReset={handleHandoverReset}
               onUpdateStoreInfo={setStoreInfo}
               onRestoreData={handleRestoreData}
               onResetAllData={handleResetAllData}
@@ -675,62 +681,68 @@ export default function App() {
 
       </div>
 
-      {/* MOBILE BOTTOM STICKY NAVIGATION BAR (Role Aware) */}
+      {/* MOBILE BOTTOM STICKY NAVIGATION BAR (Filtered Dynamically) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 px-2 py-1.5 shadow-lg flex items-center justify-around print:hidden">
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("pos")}
-          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "pos" ? "text-teal-600" : "text-slate-500"
-            }`}
-        >
-          <ShoppingCart size={18} />
-          <span>نقاط البيع</span>
-        </button>
-
-        {isAdmin && (
-          <>
-            <button
-              type="button"
-              onClick={() => setActiveTab("inventory")}
-              className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "inventory" ? "text-teal-600" : "text-slate-500"
-                }`}
-            >
-              <Package size={18} />
-              <span>المخزن</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("financials")}
-              className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "financials" ? "text-teal-600" : "text-slate-500"
-                }`}
-            >
-              <TrendingUp size={18} />
-              <span>المالية</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("partners")}
-              className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "partners" ? "text-teal-600" : "text-slate-500"
-                }`}
-            >
-              <Users size={18} />
-              <span>الشركاء</span>
-            </button>
-          </>
+        {userAllowedTabs.includes("pos") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("pos")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "pos" ? "text-teal-600" : "text-slate-500"
+              }`}
+          >
+            <ShoppingCart size={18} />
+            <span>سلة البيع</span>
+          </button>
         )}
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("settings")}
-          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "settings" ? "text-teal-600" : "text-slate-500"
-            }`}
-        >
-          <Settings size={18} />
-          <span>{isAdmin ? "الإعدادات" : "حسابي"}</span>
-        </button>
+        {userAllowedTabs.includes("inventory") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("inventory")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "inventory" ? "text-teal-600" : "text-slate-500"
+              }`}
+          >
+            <Package size={18} />
+            <span>المخزن</span>
+          </button>
+        )}
+
+        {userAllowedTabs.includes("financials") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("financials")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "financials" ? "text-teal-600" : "text-slate-500"
+              }`}
+          >
+            <TrendingUp size={18} />
+            <span>المالية</span>
+          </button>
+        )}
+
+        {userAllowedTabs.includes("partners") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("partners")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "partners" ? "text-teal-600" : "text-slate-500"
+              }`}
+          >
+            <Users size={18} />
+            <span>الشركاء</span>
+          </button>
+        )}
+
+        {userAllowedTabs.includes("settings") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("settings")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "settings" ? "text-teal-600" : "text-slate-500"
+              }`}
+          >
+            <Settings size={18} />
+            <span>الإعدادات</span>
+          </button>
+        )}
 
       </div>
 
@@ -744,7 +756,7 @@ export default function App() {
           />
           <span className="font-bold text-slate-700">{storeInfo.name}</span>
           <span className="text-slate-300">•</span>
-          <span>{storeInfo.slogan || "جودة - توفير "}</span>
+          <span>{storeInfo.slogan || "جودة - توفير"}</span>
         </div>
       </footer>
 

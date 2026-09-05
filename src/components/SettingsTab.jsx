@@ -9,11 +9,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   AlertCircle,
-  Sparkles,
   Store,
-  Phone,
-  MapPin,
-  Percent,
   Save,
   FileText,
   Users,
@@ -22,20 +18,20 @@ import {
   ShieldCheck,
   UserCheck,
   Edit2,
-  Lock,
   Eye,
   EyeOff,
-  User,
-  Mail,
-  X
+  X,
+  CheckSquare,
+  Square,
+  RotateCcw
 } from "lucide-react";
-import {
-  initialProducts,
-  initialSales,
-  initialExpenses,
-  initialPartners,
-  initialWithdrawals
-} from "../utils/sampleData";
+
+const AVAILABLE_PERMISSIONS = [
+  { id: "pos", label: "سلة البيع (نقاط البيع)", desc: "إصدار الفواتير وتحصيل المبيعات" },
+  { id: "inventory", label: "المخزن والمنتجات", desc: "إدارة الأصناف، التوريد، وتسوية الجرد" },
+  { id: "financials", label: "المالية والمصروفات", desc: "سجل المصروفات والأرباح والخزينة" },
+  { id: "partners", label: "حسابات الشركاء", desc: "رأس المال ومسحوبات الأرباح للشركاء" }
+];
 
 export default function SettingsTab({
   products,
@@ -53,14 +49,16 @@ export default function SettingsTab({
   onAddUser,
   onUpdateUser,
   onDeleteUser,
-  onDeleteSelfAccount
+  onDeleteSelfAccount,
+  onHandoverReset
 }) {
   const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [handoverModalOpen, setHandoverModalOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const fileInputRef = useRef(null);
 
-  // User Management Modals State (Admin)
+  // User Management Modals State (Owner Only)
   const [addUserModalOpen, setAddUserModalOpen] = useState(false);
   const [editUserModalOpen, setEditUserModalOpen] = useState(false);
   const [selectedUserForEdit, setSelectedUserForEdit] = useState(null);
@@ -74,17 +72,20 @@ export default function SettingsTab({
   const [newUserName, setNewUserName] = useState("");
   const [newUserIdentifier, setNewUserIdentifier] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
-  const [newUserRole, setNewUserRole] = useState("cashier");
+  const [newUserRole, setNewUserRole] = useState("cashier"); // "owner" | "cashier"
+  const [newUserPermissions, setNewUserPermissions] = useState(["pos"]);
   const [showNewUserPassword, setShowNewUserPassword] = useState(false);
 
   // Edit User Form State
   const [editFullName, setEditFullName] = useState("");
+  const [editUsername, setEditUsername] = useState("");
   const [editRole, setEditRole] = useState("cashier");
+  const [editPermissions, setEditPermissions] = useState(["pos"]);
   const [editPassword, setEditPassword] = useState("");
   const [showEditPassword, setShowEditPassword] = useState(false);
 
   const [storeForm, setStoreForm] = useState(storeInfo || {
-    name: "",
+    name: "Clean Store",
     phone: "",
     address: "",
     taxRate: 14
@@ -102,10 +103,12 @@ export default function SettingsTab({
     setTimeout(() => setErrorMessage(""), 4000);
   };
 
+  const isOwner = currentUser?.role === "owner" || currentUser?.role === "admin";
+
   // 1. Export JSON Backup
   const handleExportJson = () => {
     const backupData = {
-      version: "1.0",
+      version: "2.0",
       exportDate: new Date().toISOString(),
       storeInfo: storeForm,
       products,
@@ -166,7 +169,7 @@ export default function SettingsTab({
     e.target.value = null;
   };
 
-  // 3. Export CSV with UTF-8 BOM for Excel
+  // 3. Export CSV with UTF-8 BOM
   const exportCsv = (filename, headers, rows) => {
     const bom = "\uFEFF";
     const csvContent = bom + [
@@ -184,7 +187,6 @@ export default function SettingsTab({
     link.remove();
   };
 
-  // Export Products CSV
   const handleExportProductsCsv = () => {
     const headers = ["الباركود", "اسم المنتج", "القسم", "الوحدة", "سعر الشراء (ج.م)", "سعر البيع (ج.م)", "المخزون الحالي", "حد الأمان"];
     const rows = products.map(p => [
@@ -201,7 +203,6 @@ export default function SettingsTab({
     showNotification("تم تصدير قائمة المنتجات إلى CSV/Excel بنجاح!");
   };
 
-  // Export Sales CSV
   const handleExportSalesCsv = () => {
     const headers = ["رقم الفاتورة", "التاريخ والوقت", "الكاشير / البائع", "طريقة الدفع", "المجموع الفرعي", "الخصم", "الضريبة", "الإجمالي", "تكلفة البضاعة"];
     const rows = sales.map(s => [
@@ -219,7 +220,6 @@ export default function SettingsTab({
     showNotification("تم تصدير سجلات المبيعات إلى CSV/Excel بنجاح!");
   };
 
-  // Export Expenses CSV
   const handleExportExpensesCsv = () => {
     const headers = ["المعرف", "التاريخ والوقت", "البند / العنوان", "القسم", "المبلغ (ج.م)", "ملاحظات"];
     const rows = expenses.map(e => [
@@ -234,7 +234,6 @@ export default function SettingsTab({
     showNotification("تم تصدير سجل المصروفات إلى CSV/Excel بنجاح!");
   };
 
-  // Save Store Settings
   const handleSaveStoreInfo = (e) => {
     e.preventDefault();
     if (onUpdateStoreInfo) {
@@ -243,46 +242,70 @@ export default function SettingsTab({
     }
   };
 
-  // Add User Handlers (Admin)
+  // Add User Handlers (Owner)
   const handleOpenAddUserModal = () => {
     setNewUserName("");
     setNewUserIdentifier("");
     setNewUserPassword("");
     setNewUserRole("cashier");
+    setNewUserPermissions(["pos"]);
     setAddUserModalOpen(true);
+  };
+
+  const toggleNewPermission = (permId) => {
+    setNewUserPermissions(prev => {
+      if (prev.includes(permId)) {
+        const next = prev.filter(p => p !== permId);
+        return next.length === 0 ? ["pos"] : next;
+      } else {
+        return [...prev, permId];
+      }
+    });
   };
 
   const handleAddUserSubmit = (e) => {
     e.preventDefault();
-    if (!newUserName.trim()) return showError("يرجى إدخال اسم الموظف الكامل.");
-    if (!newUserIdentifier.trim()) return showError("يرجى إدخال اسم المستخدم أو البريد.");
+    if (!newUserName.trim()) return showError("يرجى إدخال اسم المستخدم الكامل.");
+    if (!newUserIdentifier.trim()) return showError("يرجى إدخال اسم المستخدم.");
     if (newUserPassword.length < 4) return showError("كلمة المرور يجب أن تكون 4 أحرف أو أرقام على الأقل.");
 
-    const isEmail = newUserIdentifier.includes("@");
     const payload = {
       fullName: newUserName.trim(),
-      username: isEmail ? newUserIdentifier.split("@")[0] : newUserIdentifier.trim(),
-      email: isEmail ? newUserIdentifier.trim() : "",
+      username: newUserIdentifier.trim(),
       password: newUserPassword,
-      role: newUserRole
+      role: newUserRole,
+      permissions: newUserRole === "owner" ? ["pos", "inventory", "financials", "partners", "settings"] : newUserPermissions
     };
 
     const result = onAddUser(payload);
     if (result && !result.success) {
-      showError(result.error || "تعذر إضافة الموظف.");
+      showError(result.error || "تعذر إضافة الحساب.");
     } else {
       setAddUserModalOpen(false);
-      showNotification(`تمت إضافة الموظف "${newUserName}" بنجاح!`);
+      showNotification(`تمت إضافة الحساب "${newUserName}" بنجاح!`);
     }
   };
 
-  // Edit User Handlers (Admin)
+  // Edit User Handlers (Owner)
   const handleOpenEditUserModal = (u) => {
     setSelectedUserForEdit(u);
     setEditFullName(u.fullName || "");
-    setEditRole(u.role || "cashier");
+    setEditUsername(u.username || "");
+    setEditRole(u.role === "admin" ? "owner" : u.role || "cashier");
+    setEditPermissions(Array.isArray(u.permissions) ? u.permissions.filter(p => p !== "settings") : ["pos"]);
     setEditPassword("");
     setEditUserModalOpen(true);
+  };
+
+  const toggleEditPermission = (permId) => {
+    setEditPermissions(prev => {
+      if (prev.includes(permId)) {
+        const next = prev.filter(p => p !== permId);
+        return next.length === 0 ? ["pos"] : next;
+      } else {
+        return [...prev, permId];
+      }
+    });
   };
 
   const handleEditUserSubmit = (e) => {
@@ -292,7 +315,9 @@ export default function SettingsTab({
 
     const updates = {
       fullName: editFullName.trim(),
-      role: editRole
+      username: editUsername.trim(),
+      role: editRole,
+      permissions: editRole === "owner" ? ["pos", "inventory", "financials", "partners", "settings"] : editPermissions
     };
     if (editPassword.trim()) {
       if (editPassword.length < 4) return showError("كلمة المرور الجديدة يجب أن تكون 4 أحرف على الأقل.");
@@ -320,6 +345,14 @@ export default function SettingsTab({
     }
   };
 
+  // Developer Handover Reset Handler
+  const handleConfirmHandoverReset = () => {
+    setHandoverModalOpen(false);
+    if (onHandoverReset) {
+      onHandoverReset();
+    }
+  };
+
   // Self Account Deletion Handler
   const handleConfirmDeleteSelf = (e) => {
     e.preventDefault();
@@ -341,9 +374,8 @@ export default function SettingsTab({
     }
   };
 
-  const adminUsersCount = users.filter(u => u.role === "admin").length;
+  const ownerUsersCount = users.filter(u => u.role === "owner" || u.role === "admin").length;
   const cashierUsersCount = users.filter(u => u.role === "cashier").length;
-  const isAdmin = currentUser?.role === "admin";
 
   return (
     <div className="space-y-6 dir-rtl text-right font-['Cairo']">
@@ -365,7 +397,7 @@ export default function SettingsTab({
       )}
 
       {/* ======================================================== */}
-      {/* 0. MY ACCOUNT PROFILE & SELF DELETION (حسابي الشخصي) */}
+      {/* 0. MY ACCOUNT PROFILE (حسابي الشخصي)                     */}
       {/* ======================================================== */}
       {currentUser && (
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
@@ -378,13 +410,13 @@ export default function SettingsTab({
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="font-black text-slate-800 text-base">{currentUser.fullName || currentUser.name}</h2>
-                  <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${isAdmin ? "bg-teal-50 text-teal-800 border-teal-200" : "bg-cyan-50 text-cyan-800 border-cyan-200"
+                  <span className={`text-[10px] font-black px-2.5 py-0.5 rounded-full border ${isOwner ? "bg-teal-50 text-teal-800 border-teal-200" : "bg-cyan-50 text-cyan-800 border-cyan-200"
                     }`}>
-                    {isAdmin ? "مدير النظام" : "كاشير مبيعات"}
+                    {isOwner ? "مالك / شريك" : "كاشير / موظف"}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 font-mono mt-0.5">
-                  اسم المستخدم: <strong>{currentUser.username}</strong> {currentUser.email ? `• ${currentUser.email}` : ""}
+                  اسم المستخدم: <strong>@{currentUser.username}</strong>
                 </p>
               </div>
             </div>
@@ -408,9 +440,9 @@ export default function SettingsTab({
       )}
 
       {/* ======================================================== */}
-      {/* 1. USER & STAFF ACCOUNTS MANAGEMENT (إدارة الحسابات للمدير) */}
+      {/* 1. USER & STAFF ACCOUNTS MANAGEMENT (إدارة الموظفين والشركاء - Owner Only) */}
       {/* ======================================================== */}
-      {isAdmin && (
+      {isOwner && (
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
 
           {/* Header & Quick Action */}
@@ -421,33 +453,31 @@ export default function SettingsTab({
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="font-black text-slate-800 text-base">إدارة حسابات الموظفين وصلاحيات الدخول</h2>
+                  <h2 className="font-black text-slate-800 text-base">إدارة الموظفين والصلاحيات</h2>
                   <span className="bg-teal-100 text-teal-800 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
                     {users.length} مستخدم
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400">
-                  إدارة كادر العمل، تحديد الأدوار (مدير نظام / كاشير)، وتعيين كلمات المرور بأمان
+                  إضافة طاقم العمل وتخصيص الصفحات والأقسام المسموح بكل موظف برؤيتها
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Quick Metrics */}
               <div className="hidden md:flex items-center gap-1.5 text-[11px] font-bold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
-                <span>مديرين: <strong className="text-teal-700 font-mono">{adminUsersCount}</strong></span>
+                <span>مالكين / شركاء: <strong className="text-teal-700 font-mono">{ownerUsersCount}</strong></span>
                 <span className="text-slate-300">•</span>
-                <span>كاشير: <strong className="text-cyan-700 font-mono">{cashierUsersCount}</strong></span>
+                <span>كاشير / موظفين: <strong className="text-cyan-700 font-mono">{cashierUsersCount}</strong></span>
               </div>
 
-              {/* Add User Button */}
               <button
                 type="button"
                 onClick={handleOpenAddUserModal}
                 className="py-2.5 px-4 bg-teal-600 hover:bg-teal-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-teal-100 flex items-center justify-center gap-2 cursor-pointer shrink-0"
               >
                 <UserPlus size={15} />
-                <span>إضافة موظف جديد</span>
+                <span>إضافة مستخدم جديد</span>
               </button>
             </div>
           </div>
@@ -457,107 +487,114 @@ export default function SettingsTab({
             <table className="w-full text-right text-xs">
               <thead>
                 <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
-                  <th className="py-3 px-4 rounded-r-xl">الموظف / الاسم الكامل</th>
-                  <th className="py-3 px-4">اسم المستخدم / البريد</th>
-                  <th className="py-3 px-4">الدور والصلاحيات</th>
-                  <th className="py-3 px-4">تاريخ الإنشاء</th>
+                  <th className="py-3 px-4 rounded-r-xl">الاسم الكامل</th>
+                  <th className="py-3 px-4">اسم المستخدم</th>
+                  <th className="py-3 px-4">نوع الحساب</th>
+                  <th className="py-3 px-4">الصفحات والأقسام المسموحة</th>
                   <th className="py-3 px-4 text-center rounded-l-xl">الإجراءات</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {users.map((u) => {
                   const isCurrent = currentUser && currentUser.id === u.id;
-                  const uIsAdmin = u.role === "admin";
-                  const isOnlyAdmin = uIsAdmin && adminUsersCount <= 1;
+                  const uIsOwner = u.role === "owner" || u.role === "admin";
+                  const isOnlyOwner = uIsOwner && ownerUsersCount <= 1;
 
                   return (
                     <tr key={u.id} className="hover:bg-slate-50/70 transition-colors">
 
-                      {/* User Full Name & Avatar */}
+                      {/* Full Name & Avatar */}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${uIsAdmin ? "bg-teal-100 text-teal-800" : "bg-cyan-100 text-cyan-800"
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${uIsOwner ? "bg-teal-100 text-teal-800" : "bg-cyan-100 text-cyan-800"
                             }`}>
                             {u.fullName ? u.fullName.charAt(0) : "م"}
                           </div>
                           <div>
                             <div className="font-extrabold text-slate-800 flex items-center gap-1.5">
-                              <span>{u.fullName || "بدون اسم"}</span>
+                              <span>{u.fullName || u.username}</span>
                               {isCurrent && (
                                 <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded-md font-bold">
                                   أنت (الحساب الحالي)
                                 </span>
                               )}
                             </div>
-                            <span className="text-[10px] text-slate-400 font-medium">
-                              {u.notes || (uIsAdmin ? "صلاحيات إدارية كاملة" : "نقاط البيع والفواتير")}
-                            </span>
                           </div>
                         </div>
                       </td>
 
-                      {/* Username or Email */}
+                      {/* Username */}
                       <td className="py-3 px-4 font-mono font-bold text-slate-600">
-                        <div>{u.username}</div>
-                        {u.email && u.email !== `${u.username}@cleanstore.local` && (
-                          <div className="text-[10px] text-slate-400 font-sans">{u.email}</div>
-                        )}
+                        @{u.username}
                       </td>
 
-                      {/* Role Badge */}
+                      {/* Account Role Badge */}
                       <td className="py-3 px-4">
-                        {uIsAdmin ? (
+                        {uIsOwner ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-teal-50 text-teal-800 border border-teal-200 text-[11px] font-black">
                             <ShieldCheck size={13} className="text-teal-600" />
-                            مدير النظام (Admin)
+                            مالك / شريك (جميع الأقسام)
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-cyan-50 text-cyan-800 border border-cyan-200 text-[11px] font-black">
                             <UserCheck size={13} className="text-cyan-600" />
-                            كاشير مبيعات (Cashier)
+                            كاشير / موظف
                           </span>
                         )}
                       </td>
 
-                      {/* Created At */}
-                      <td className="py-3 px-4 text-slate-400 font-mono text-[11px]">
-                        {u.createdAt ? new Date(u.createdAt).toLocaleDateString("ar-EG") : "مسجل بالمنظومة"}
+                      {/* Allowed Permissions Tags */}
+                      <td className="py-3 px-4">
+                        {uIsOwner ? (
+                          <span className="text-slate-400 font-semibold text-[11px]">كافة أقسام المنظومة</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {Array.isArray(u.permissions) && u.permissions.length > 0 ? (
+                              u.permissions.map(p => {
+                                const found = AVAILABLE_PERMISSIONS.find(item => item.id === p);
+                                return (
+                                  <span key={p} className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-200">
+                                    {found ? found.label.split(" ")[0] : p}
+                                  </span>
+                                );
+                              })
+                            ) : (
+                              <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-[10px] font-bold">سلة البيع</span>
+                            )}
+                          </div>
+                        )}
                       </td>
 
                       {/* Actions */}
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-
-                          {/* Edit Button */}
                           <button
                             type="button"
                             onClick={() => handleOpenEditUserModal(u)}
                             className="p-1.5 rounded-lg bg-slate-100 hover:bg-teal-50 text-slate-600 hover:text-teal-700 transition-colors cursor-pointer"
-                            title="تعديل الصلاحيات أو كلمة المرور"
+                            title="تعديل الحساب والصلاحيات"
                           >
                             <Edit2 size={14} />
                           </button>
 
-                          {/* Delete Button */}
                           <button
                             type="button"
-                            disabled={isCurrent || isOnlyAdmin}
+                            disabled={isCurrent || isOnlyOwner}
                             onClick={() => handleDeleteUserClick(u)}
-                            className={`p-1.5 rounded-lg transition-colors ${isCurrent || isOnlyAdmin
+                            className={`p-1.5 rounded-lg transition-colors ${isCurrent || isOnlyOwner
                               ? "bg-slate-100 text-slate-300 cursor-not-allowed"
                               : "bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 cursor-pointer"
                               }`}
                             title={
                               isCurrent
-                                ? "استخدم زر 'حذف حسابي' أعلاه لحذف حسابك الحالي"
-                                : isOnlyAdmin
-                                  ? "لا يمكن حذف آخر مدير للنظام"
+                                ? "استخدم زر 'حذف حسابي' أعلاه لحذف حسابك"
+                                : isOnlyOwner
+                                  ? "لا يمكن حذف مالك المتجر الوحيد"
                                   : "حذف الحساب نهائياً"
                             }
                           >
                             <Trash2 size={14} />
                           </button>
-
                         </div>
                       </td>
 
@@ -574,7 +611,7 @@ export default function SettingsTab({
       {/* ======================================================== */}
       {/* 2. STORE SETTINGS & DATA OPERATIONS (الإعدادات للمدير) */}
       {/* ======================================================== */}
-      {isAdmin && (
+      {isOwner && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
           {/* Store Profile & Invoice Settings */}
@@ -585,7 +622,6 @@ export default function SettingsTab({
               </div>
               <div>
                 <h2 className="font-black text-slate-800 text-base">بيانات المحل والفاتورة</h2>
-
               </div>
             </div>
 
@@ -601,27 +637,21 @@ export default function SettingsTab({
                 />
               </div>
 
-
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-500 font-bold mb-1">رقم الهاتف للتواصل:</label>
-                  <input
-                    type="text"
-                    value={storeForm.phone}
-                    onChange={(e) => setStoreForm({ ...storeForm, phone: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono"
-                  />
-                </div>
-
-
+              <div>
+                <label className="block text-slate-500 font-bold mb-1">رقم الهاتف للتواصل:</label>
+                <input
+                  type="text"
+                  value={storeForm.phone || ""}
+                  onChange={(e) => setStoreForm({ ...storeForm, phone: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono"
+                />
               </div>
 
               <div>
                 <label className="block text-slate-500 font-bold mb-1">العنوان والفرع:</label>
                 <input
                   type="text"
-                  value={storeForm.address}
+                  value={storeForm.address || ""}
                   onChange={(e) => setStoreForm({ ...storeForm, address: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
@@ -632,7 +662,7 @@ export default function SettingsTab({
                 className="w-full py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-extrabold rounded-xl transition-all shadow-md shadow-teal-100 flex items-center justify-center gap-2 cursor-pointer mt-2"
               >
                 <Save size={16} />
-                حفظ
+                حفظ بيانات المتجر
               </button>
             </form>
           </div>
@@ -653,7 +683,6 @@ export default function SettingsTab({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Export JSON */}
                 <button
                   type="button"
                   onClick={handleExportJson}
@@ -668,7 +697,6 @@ export default function SettingsTab({
                   </div>
                 </button>
 
-                {/* Import JSON */}
                 <div className="relative">
                   <input
                     type="file"
@@ -702,7 +730,7 @@ export default function SettingsTab({
                 </div>
                 <div>
                   <h2 className="font-black text-slate-800 text-base">تصدير التوافق مع إكسل (CSV)</h2>
-                  <p className="text-[11px] text-slate-400">تصدير تقارير مشفرة بـ UTF-8 BOM تدعم اللغة العربية في Excel بدون رموز غريبة</p>
+                  <p className="text-[11px] text-slate-400">تصدير تقارير مشفرة بـ UTF-8 BOM تدعم اللغة العربية في Excel</p>
                 </div>
               </div>
 
@@ -736,25 +764,34 @@ export default function SettingsTab({
               </div>
             </div>
 
-            {/* Clear All Data */}
-            <div className="bg-white p-6 rounded-2xl border border-rose-100 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-xl bg-rose-50 text-rose-600">
-                    <Trash2 size={20} />
-                  </div>
-                  <div>
-                    <h2 className="font-black text-rose-800 text-base">تصفير وإعادة تهيئة البيانات</h2>
-                    <p className="text-[11px] text-slate-400">مسح المنتجات والمبيعات والمصروفات والبدء بقاعدة بيانات فارغة</p>
-                  </div>
+            {/* DEVELOPER RESET TOOL FOR CLIENT HANDOVER (تهيئة التطبيق للتسليم للعميل) */}
+            <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 p-6 rounded-2xl border border-indigo-900 text-white shadow-xl space-y-4">
+              <div className="flex items-center gap-3 border-b border-indigo-800/60 pb-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <RotateCcw size={22} />
                 </div>
+                <div>
+                  <h2 className="font-black text-base text-amber-300">تهيئة التطبيق للتسليم للعميل (Developer Handover)</h2>
+                  <p className="text-[11px] text-slate-300">
+                    تفريغ بيانات التجربة بالكامل وإعادة التطبيق لشاشة "إنشاء حساب مالك المتجر لأول مرة"
+                  </p>
+                </div>
+              </div>
 
+              <div className="text-xs text-slate-300 space-y-2 leading-relaxed">
+                <p>
+                  عند النقر على هذا الخيار، سيتم حذف كل بيانات الاختبار (الحسابات، المبيعات التجريبية، الأصناف، والمصروفات)، ويعود البرنامج بحالة جديدة تماماً ليتسلم العميل المتجر ويسجل حساب المالك بنفسه.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end pt-1">
                 <button
                   type="button"
-                  onClick={() => setResetModalOpen(true)}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-rose-100 transition-all cursor-pointer shrink-0"
+                  onClick={() => setHandoverModalOpen(true)}
+                  className="w-full sm:w-auto px-5 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
-                  تصفير البيانات
+                  <RotateCcw size={16} />
+                  <span>تفريغ بيانات التجربة وتهيئة التطبيق للتسليم للعميل</span>
                 </button>
               </div>
             </div>
@@ -765,11 +802,52 @@ export default function SettingsTab({
       )}
 
       {/* ======================================================== */}
+      {/* MODAL: DEVELOPER HANDOVER RESET CONFIRMATION             */}
+      {/* ======================================================== */}
+      {handoverModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 text-right">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-2">
+              <RotateCcw size={24} />
+            </div>
+
+            <div className="text-center space-y-1">
+              <h3 className="text-lg font-black text-slate-800">تأكيد تهيئة التطبيق للتسليم للعميل</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                سيتم تصفير جميع بيانات التجربة والحسابات ومسح قاعدة البيانات تماماً.
+              </p>
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs font-bold text-center">
+              سيظهر للتطبيق فوراً شاشة "إنشاء حساب مالك المتجر لأول مرة" ليعين العميل حسابه الخاص.
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={handleConfirmHandoverReset}
+                className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl transition-all text-xs cursor-pointer shadow-md shadow-amber-200"
+              >
+                تأكيد التفريغ والتهيئة الآن
+              </button>
+              <button
+                type="button"
+                onClick={() => setHandoverModalOpen(false)}
+                className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-all text-xs cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* MODAL: SELF ACCOUNT DELETION CONFIRMATION                */}
       {/* ======================================================== */}
       {deleteSelfModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 animate-scale-up text-right">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 text-right">
 
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2 text-rose-600 font-black text-base">
@@ -792,15 +870,8 @@ export default function SettingsTab({
             <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-900 space-y-1.5">
               <div className="font-black text-sm text-rose-700">⚠️ تحذير نهائي:</div>
               <div>
-                أنت على وشك حذف حسابك الحالي <strong>({currentUser?.fullName || currentUser?.username})</strong> نهائياً من المتجر.
+                أنت على وشك حذف حسابك الحالي <strong>({currentUser?.fullName || currentUser?.username})</strong> نهائياً.
               </div>
-              <div className="text-[11px] text-rose-700 font-bold">
-                سيتم تسجيل خروجك فوراً ولن تتمكن من الوصول للنظام بهذا الحساب مرة أخرى.
-              </div>
-            </div>
-
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl text-[11px] text-slate-600 font-medium leading-relaxed">
-              💡 <strong>حماية البيانات المالية:</strong> جميع المعاملات المالية وفواتير المبيعات السابقة المسجلة باسمك ستظل محفوظة ومأمونة في تقارير المحل.
             </div>
 
             {deleteSelfError && (
@@ -813,13 +884,13 @@ export default function SettingsTab({
             <form onSubmit={handleConfirmDeleteSelf} className="space-y-3 pt-1">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  لتأكيد الحذف النهائي، أدخل كلمة المرور الخاصة بحسابك (أو اكتب "حذف"):
+                  أدخل كلمة المرور لتأكيد حذف حسابك:
                 </label>
                 <input
                   type="password"
                   value={deleteSelfPassword}
                   onChange={(e) => setDeleteSelfPassword(e.target.value)}
-                  placeholder="أدخل كلمة المرور أو كلمة حذف"
+                  placeholder="أدخل كلمة المرور"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-800 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-rose-500 text-right"
                   required
                 />
@@ -835,7 +906,7 @@ export default function SettingsTab({
                   }}
                   className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
                 >
-                  إلغاء وتراجع
+                  إلغاء
                 </button>
                 <button
                   type="submit"
@@ -852,7 +923,7 @@ export default function SettingsTab({
       )}
 
       {/* ======================================================== */}
-      {/* MODAL: ADD STAFF USER (Admin)                            */}
+      {/* MODAL: ADD STAFF USER (Owner Only)                       */}
       {/* ======================================================== */}
       {addUserModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -860,7 +931,7 @@ export default function SettingsTab({
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2 text-teal-700 font-black text-base">
                 <UserPlus size={20} />
-                <span>إضافة موظف جديد لمتجر المنظفات</span>
+                <span>إضافة مستخدم جديد</span>
               </div>
               <button
                 type="button"
@@ -871,9 +942,9 @@ export default function SettingsTab({
               </button>
             </div>
 
-            <form onSubmit={handleAddUserSubmit} className="space-y-3 text-xs">
+            <form onSubmit={handleAddUserSubmit} className="space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-600 font-bold mb-1">الاسم الكامل للموظف:</label>
+                <label className="block text-slate-600 font-bold mb-1">الاسم الكامل:</label>
                 <input
                   type="text"
                   value={newUserName}
@@ -885,12 +956,12 @@ export default function SettingsTab({
               </div>
 
               <div>
-                <label className="block text-slate-600 font-bold mb-1">اسم المستخدم أو البريد الإلكتروني:</label>
+                <label className="block text-slate-600 font-bold mb-1">اسم المستخدم:</label>
                 <input
                   type="text"
                   value={newUserIdentifier}
                   onChange={(e) => setNewUserIdentifier(e.target.value)}
-                  placeholder="مثال: mahmoud أو mahmoud@store.com"
+                  placeholder="مثال: mahmoud"
                   className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
                   required
                 />
@@ -918,13 +989,30 @@ export default function SettingsTab({
               </div>
 
               <div>
-                <label className="block text-slate-600 font-bold mb-1">الدور والصلاحيات في التطبيق:</label>
+                <label className="block text-slate-600 font-bold mb-1">نوع الحساب:</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${newUserRole === "cashier" ? "bg-teal-50 border-teal-500 text-teal-900" : "bg-slate-50 border-slate-200 text-slate-600"
+                  <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${newUserRole === "owner" ? "bg-teal-50 border-teal-500 text-teal-900 shadow-xs" : "bg-slate-50 border-slate-200 text-slate-600"
                     }`}>
                     <input
                       type="radio"
-                      name="role"
+                      name="newUserRole"
+                      value="owner"
+                      checked={newUserRole === "owner"}
+                      onChange={() => setNewUserRole("owner")}
+                      className="hidden"
+                    />
+                    <ShieldCheck size={16} className={newUserRole === "owner" ? "text-teal-600" : "text-slate-400"} />
+                    <div>
+                      <div className="font-black text-xs">مالك / شريك</div>
+                      <div className="text-[10px] text-slate-400">يرى جميع الأقسام</div>
+                    </div>
+                  </label>
+
+                  <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${newUserRole === "cashier" ? "bg-teal-50 border-teal-500 text-teal-900 shadow-xs" : "bg-slate-50 border-slate-200 text-slate-600"
+                    }`}>
+                    <input
+                      type="radio"
+                      name="newUserRole"
                       value="cashier"
                       checked={newUserRole === "cashier"}
                       onChange={() => setNewUserRole("cashier")}
@@ -932,31 +1020,49 @@ export default function SettingsTab({
                     />
                     <UserCheck size={16} className={newUserRole === "cashier" ? "text-teal-600" : "text-slate-400"} />
                     <div>
-                      <div className="font-extrabold text-xs">كاشير مبيعات</div>
-                      <div className="text-[10px] text-slate-400">نقاط البيع والفواتير فقط</div>
-                    </div>
-                  </label>
-
-                  <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${newUserRole === "admin" ? "bg-teal-50 border-teal-500 text-teal-900" : "bg-slate-50 border-slate-200 text-slate-600"
-                    }`}>
-                    <input
-                      type="radio"
-                      name="role"
-                      value="admin"
-                      checked={newUserRole === "admin"}
-                      onChange={() => setNewUserRole("admin")}
-                      className="hidden"
-                    />
-                    <ShieldCheck size={16} className={newUserRole === "admin" ? "text-teal-600" : "text-slate-400"} />
-                    <div>
-                      <div className="font-extrabold text-xs">مدير النظام</div>
-                      <div className="text-[10px] text-slate-400">جميع الصلاحيات والإعدادات</div>
+                      <div className="font-black text-xs">كاشير / موظف</div>
+                      <div className="text-[10px] text-slate-400">تحديد الصفحات بالأسفل</div>
                     </div>
                   </label>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3">
+              {/* Granular Permission Checkboxes (Visible if Cashier) */}
+              {newUserRole === "cashier" && (
+                <div className="space-y-2 pt-1 border-t border-slate-100">
+                  <label className="block text-xs font-bold text-slate-700">
+                    الصفحات والأقسام المسموح له بها:
+                  </label>
+
+                  <div className="space-y-1.5">
+                    {AVAILABLE_PERMISSIONS.map((perm) => {
+                      const isChecked = newUserPermissions.includes(perm.id);
+                      return (
+                        <div
+                          key={perm.id}
+                          onClick={() => toggleNewPermission(perm.id)}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${isChecked
+                            ? "bg-teal-50/70 border-teal-400 text-teal-950 font-bold"
+                            : "bg-slate-50 border-slate-200 text-slate-500"
+                            }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isChecked ? (
+                              <CheckSquare size={16} className="text-teal-600" />
+                            ) : (
+                              <Square size={16} className="text-slate-300" />
+                            )}
+                            <span>{perm.label}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-normal">{perm.desc}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setAddUserModalOpen(false)}
@@ -977,7 +1083,7 @@ export default function SettingsTab({
       )}
 
       {/* ======================================================== */}
-      {/* MODAL: EDIT STAFF USER (Admin)                           */}
+      {/* MODAL: EDIT STAFF USER (Owner Only)                      */}
       {/* ======================================================== */}
       {editUserModalOpen && selectedUserForEdit && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -985,7 +1091,7 @@ export default function SettingsTab({
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2 text-teal-700 font-black text-base">
                 <Edit2 size={18} />
-                <span>تعديل حساب ({selectedUserForEdit.username})</span>
+                <span>تعديل بيانات الحساب (@{selectedUserForEdit.username})</span>
               </div>
               <button
                 type="button"
@@ -996,9 +1102,9 @@ export default function SettingsTab({
               </button>
             </div>
 
-            <form onSubmit={handleEditUserSubmit} className="space-y-3 text-xs">
+            <form onSubmit={handleEditUserSubmit} className="space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-600 font-bold mb-1">الاسم الكامل للموظف:</label>
+                <label className="block text-slate-600 font-bold mb-1">الاسم الكامل:</label>
                 <input
                   type="text"
                   value={editFullName}
@@ -1009,7 +1115,18 @@ export default function SettingsTab({
               </div>
 
               <div>
-                <label className="block text-slate-600 font-bold mb-1">تغيير كلمة المرور (اختياري - اتركها فارغة إذا لم تكن تريد تغييرها):</label>
+                <label className="block text-slate-600 font-bold mb-1">اسم المستخدم:</label>
+                <input
+                  type="text"
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-600 font-bold mb-1">تغيير كلمة المرور (اختياري):</label>
                 <div className="relative flex items-center">
                   <input
                     type={showEditPassword ? "text" : "password"}
@@ -1029,9 +1146,23 @@ export default function SettingsTab({
               </div>
 
               <div>
-                <label className="block text-slate-600 font-bold mb-1">الدور والصلاحيات:</label>
+                <label className="block text-slate-600 font-bold mb-1">نوع الحساب:</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${editRole === "cashier" ? "bg-teal-50 border-teal-500 text-teal-900" : "bg-slate-50 border-slate-200 text-slate-600"
+                  <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${editRole === "owner" ? "bg-teal-50 border-teal-500 text-teal-900" : "bg-slate-50 border-slate-200 text-slate-600"
+                    }`}>
+                    <input
+                      type="radio"
+                      name="editRole"
+                      value="owner"
+                      checked={editRole === "owner"}
+                      onChange={() => setEditRole("owner")}
+                      className="hidden"
+                    />
+                    <ShieldCheck size={16} className={editRole === "owner" ? "text-teal-600" : "text-slate-400"} />
+                    <div className="font-black text-xs">مالك / شريك</div>
+                  </label>
+
+                  <label className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${editRole === "cashier" ? "bg-teal-50 border-teal-500 text-teal-900" : "bg-slate-50 border-slate-200 text-slate-600"
                     }`}>
                     <input
                       type="radio"
@@ -1042,26 +1173,47 @@ export default function SettingsTab({
                       className="hidden"
                     />
                     <UserCheck size={16} className={editRole === "cashier" ? "text-teal-600" : "text-slate-400"} />
-                    <div className="font-extrabold text-xs">كاشير مبيعات</div>
-                  </label>
-
-                  <label className={`p-2.5 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${editRole === "admin" ? "bg-teal-50 border-teal-500 text-teal-900" : "bg-slate-50 border-slate-200 text-slate-600"
-                    }`}>
-                    <input
-                      type="radio"
-                      name="editRole"
-                      value="admin"
-                      checked={editRole === "admin"}
-                      onChange={() => setEditRole("admin")}
-                      className="hidden"
-                    />
-                    <ShieldCheck size={16} className={editRole === "admin" ? "text-teal-600" : "text-slate-400"} />
-                    <div className="font-extrabold text-xs">مدير النظام</div>
+                    <div className="font-black text-xs">كاشير / موظف</div>
                   </label>
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3">
+              {/* Granular Permission Checkboxes for Cashier */}
+              {editRole === "cashier" && (
+                <div className="space-y-2 pt-1 border-t border-slate-100">
+                  <label className="block text-xs font-bold text-slate-700">
+                    الصفحات والأقسام المسموح له بها:
+                  </label>
+
+                  <div className="space-y-1.5">
+                    {AVAILABLE_PERMISSIONS.map((perm) => {
+                      const isChecked = editPermissions.includes(perm.id);
+                      return (
+                        <div
+                          key={perm.id}
+                          onClick={() => toggleEditPermission(perm.id)}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${isChecked
+                            ? "bg-teal-50/70 border-teal-400 text-teal-950 font-bold"
+                            : "bg-slate-50 border-slate-200 text-slate-500"
+                            }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {isChecked ? (
+                              <CheckSquare size={16} className="text-teal-600" />
+                            ) : (
+                              <Square size={16} className="text-slate-300" />
+                            )}
+                            <span>{perm.label}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-normal">{perm.desc}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setEditUserModalOpen(false)}
@@ -1077,53 +1229,6 @@ export default function SettingsTab({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* MODAL: RESET DATA CONFIRMATION                           */}
-      {/* ======================================================== */}
-      {resetModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 text-right">
-
-            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-2">
-              <AlertTriangle size={24} />
-            </div>
-
-            <div className="text-center space-y-1">
-              <h3 className="text-lg font-black text-slate-800">تأكيد تصفير ومسح كافة البيانات</h3>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                تحذير هام: هذا الإجراء سيقوم بحذف كافة المنتجات، فواتير المبيعات، سجلات المصروفات، ومسحوبات الشركاء من التخزين المحلي.
-              </p>
-            </div>
-
-            <div className="p-3 bg-rose-50 rounded-2xl border border-rose-200 text-rose-800 text-xs font-bold text-center">
-              هل أنت متأكد تماماً من رغبتك في البدء بقاعدة بيانات فارغة تماماً؟
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  onResetAllData();
-                  setResetModalOpen(false);
-                  showNotification("تم تصفير ومسح كافة البيانات والبدء من جديد!");
-                }}
-                className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white font-extrabold rounded-xl transition-all text-xs cursor-pointer shadow-md shadow-rose-200"
-              >
-                نعم، امسح كل شيء
-              </button>
-              <button
-                type="button"
-                onClick={() => setResetModalOpen(false)}
-                className="px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-all text-xs cursor-pointer"
-              >
-                إلغاء التراجع
-              </button>
-            </div>
-
           </div>
         </div>
       )}
