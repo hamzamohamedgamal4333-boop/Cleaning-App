@@ -1,18 +1,15 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   ShoppingCart,
   Package,
   TrendingUp,
   Users,
   Settings,
-  Sparkles,
-  AlertTriangle,
-  Clock,
-  LogOut,
-  Download,
   ShieldCheck,
   UserCheck,
-  RotateCcw
+  Download,
+  LogOut,
+  RefreshCw
 } from "lucide-react";
 
 // Import custom components
@@ -36,68 +33,62 @@ import {
 import {
   getStoredUsers,
   saveStoredUsers,
-  registerUser,
-  updateStoredUser,
-  deleteStoredUser,
   deleteSelfAccount,
-  resetAppForClient,
+  resetAppForHandover,
   getActiveSession,
   setActiveSession,
   clearActiveSession
 } from "./utils/authStorage";
 
-export default function App() {
-  // 1. Authentication State (Active Session persistent across refreshes)
-  const [currentUser, setCurrentUser] = useState(() => getActiveSession());
+// Import Supabase unified database service
+import {
+  fetchProducts,
+  fetchInvoices,
+  fetchExpenses,
+  fetchPartners,
+  fetchUsers,
+  createInvoiceInDb,
+  saveProductsInDb,
+  createExpenseInDb,
+  savePartnersInDb,
+  registerUserInDb,
+  updateUserInDb,
+  deleteUserFromDb,
+  subscribeToRealtimeSync
+} from "./services/dbService";
 
-  // 1.1 Registered Users List from LocalStorage (store_users)
+export default function App() {
+  // 1. Authentication State
+  const [currentUser, setCurrentUser] = useState(() => getActiveSession());
   const [users, setUsers] = useState(() => getStoredUsers());
 
-  // 2. Global Persistent State (Default to empty arrays for clean start as requested)
-  const [products, setProducts] = useState(() => {
-    const saved = localStorage.getItem("cleanstore_products");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [sales, setSales] = useState(() => {
-    const saved = localStorage.getItem("cleanstore_sales");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [expenses, setExpenses] = useState(() => {
-    const saved = localStorage.getItem("cleanstore_expenses");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [partners, setPartners] = useState(() => {
-    const saved = localStorage.getItem("cleanstore_partners");
-    return saved ? JSON.parse(saved) : [
-      { id: "part-1", name: "الشريك الأساسي (المدير)", capitalShare: 50000, profitPercentage: 100 }
-    ];
-  });
-
+  // 2. Global DB State
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [partners, setPartners] = useState([
+    { id: "part-1", name: "الشريك الأساسي (المدير)", capitalShare: 50000, profitPercentage: 100 }
+  ]);
   const [withdrawals, setWithdrawals] = useState(() => {
     const saved = localStorage.getItem("cleanstore_withdrawals");
     return saved ? JSON.parse(saved) : [];
   });
-
   const [purchases, setPurchases] = useState(() => {
     const saved = localStorage.getItem("cleanstore_purchases");
     return saved ? JSON.parse(saved) : [];
   });
-
   const [storeInfo, setStoreInfo] = useState(() => {
     const saved = localStorage.getItem("cleanstore_store_info");
     return saved ? JSON.parse(saved) : {
       name: "Clean Store",
-      slogan: "جودة - توفير ",
+      slogan: "جودة - توفير",
       taxRate: 14
     };
   });
 
   // Local UI States
-  const [activeTab, setActiveTab] = useState("pos"); // "pos" | "inventory" | "financials" | "partners" | "settings"
-  const [cart, setCart] = useState([]); // Shared cart state
+  const [activeTab, setActiveTab] = useState("pos");
+  const [cart, setCart] = useState([]);
 
   // PWA Install Prompt & Standalone Mode State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -105,6 +96,61 @@ export default function App() {
   const [isStandalone, setIsStandalone] = useState(() => {
     return Boolean(window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone);
   });
+
+  // Central DB Data Loader
+  const loadAllDataFromDb = async () => {
+    try {
+      const [prods, invs, exps, parts, usrs] = await Promise.all([
+        fetchProducts(),
+        fetchInvoices(),
+        fetchExpenses(),
+        fetchPartners(),
+        fetchUsers()
+      ]);
+      if (prods && prods.length > 0) setProducts(prods);
+      if (invs) setSales(invs);
+      if (exps) setExpenses(exps);
+      if (parts && parts.length > 0) setPartners(parts);
+      if (usrs && usrs.length > 0) setUsers(usrs);
+    } catch (err) {
+      console.error("Error loading DB data in App:", err);
+    }
+  };
+
+  // Initial load & Supabase Realtime Subscription setup
+  useEffect(() => {
+    loadAllDataFromDb();
+
+    // Subscribe to multi-device live updates
+    const unsubscribe = subscribeToRealtimeSync((payload) => {
+      console.log("Supabase Realtime Sync Event received:", payload.table, payload.eventType);
+      loadAllDataFromDb();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Determine if logged-in user is Owner
+  const isOwner = currentUser?.role === "owner" || currentUser?.role === "admin";
+
+  // Calculate allowed navbar tabs dynamically based on user permissions
+  const userAllowedTabs = useMemo(() => {
+    if (!currentUser) return ["pos"];
+    if (isOwner) return ["pos", "inventory", "financials", "partners", "settings"];
+
+    const rawPerms = Array.isArray(currentUser.permissions) ? currentUser.permissions : ["pos"];
+    const filtered = rawPerms.filter(p => p !== "settings");
+    return filtered.length > 0 ? filtered : ["pos"];
+  }, [currentUser, isOwner]);
+
+  // Sync active tab to first allowed tab if on unauthorized tab
+  useEffect(() => {
+    if (currentUser && !userAllowedTabs.includes(activeTab)) {
+      setActiveTab(userAllowedTabs[0] || "pos");
+    }
+  }, [currentUser, userAllowedTabs, activeTab]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(display-mode: standalone)");
@@ -127,23 +173,7 @@ export default function App() {
     };
   }, []);
 
-  // Sync state modifications to localStorage
-  useEffect(() => {
-    localStorage.setItem("cleanstore_products", JSON.stringify(products));
-  }, [products]);
-
-  useEffect(() => {
-    localStorage.setItem("cleanstore_sales", JSON.stringify(sales));
-  }, [sales]);
-
-  useEffect(() => {
-    localStorage.setItem("cleanstore_expenses", JSON.stringify(expenses));
-  }, [expenses]);
-
-  useEffect(() => {
-    localStorage.setItem("cleanstore_partners", JSON.stringify(partners));
-  }, [partners]);
-
+  // Save non-table local states
   useEffect(() => {
     localStorage.setItem("cleanstore_withdrawals", JSON.stringify(withdrawals));
   }, [withdrawals]);
@@ -155,11 +185,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("cleanstore_store_info", JSON.stringify(storeInfo));
   }, [storeInfo]);
-
-  // Sync registered users to localStorage (store_users)
-  useEffect(() => {
-    saveStoredUsers(users);
-  }, [users]);
 
   // PWA Install Prompt Listener
   useEffect(() => {
@@ -183,7 +208,7 @@ export default function App() {
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) {
-      alert("التطبيق مثبت بالفعل أو أن متصفحك لا يدعم التثبيت المباشر. يمكنك تثبيته من قائمة خيارات المتصفح (إضافة للشاشة الرئيسية).");
+      alert("التطبيق مثبت بالفعل أو أن متصفحك لا يدعم التثبيت المباشر. يمكنك تثبيته من قائمة خيارات المتصفح.");
       return;
     }
     deferredPrompt.prompt();
@@ -194,14 +219,17 @@ export default function App() {
     setDeferredPrompt(null);
   };
 
-  // Authentication Handlers (Active Session persists across page refreshes)
+  // Authentication Handlers
   const handleLogin = (user) => {
     setCurrentUser(user);
     setActiveSession(user, true);
-    // If cashier, enforce pos tab
-    if (user.role === "cashier") {
-      setActiveTab("pos");
-    }
+    loadAllDataFromDb();
+    const userIsOwner = user.role === "owner" || user.role === "admin";
+    const allowed = userIsOwner
+      ? ["pos", "inventory", "financials", "partners", "settings"]
+      : (Array.isArray(user.permissions) ? user.permissions.filter(p => p !== "settings") : ["pos"]);
+    const targetTab = allowed.includes("pos") ? "pos" : (allowed[0] || "pos");
+    setActiveTab(targetTab);
   };
 
   const handleLogout = () => {
@@ -216,73 +244,92 @@ export default function App() {
     if (res.success) {
       setCurrentUser(null);
       clearActiveSession();
-      setUsers(getStoredUsers(false));
+      setUsers([]);
       setActiveTab("pos");
     }
     return res;
   };
 
-  const handleClientReset = () => {
-    const confirmReset = window.confirm(
-      "هل أنت متأكد من حذف الحساب وتجهيز البرنامج للمالك الجديد؟"
-    );
-    if (confirmReset) {
-      resetAppForClient();
-      setCurrentUser(null);
-      setUsers([]);
-      setActiveTab("pos");
-    }
+  // Developer Reset Tool for Handover
+  const handleHandoverReset = () => {
+    resetAppForHandover();
+    setCurrentUser(null);
+    setUsers([]);
+    setProducts([]);
+    setSales([]);
+    setExpenses([]);
+    setPurchases([]);
+    setPartners([
+      { id: "part-1", name: "الشريك الأساسي (المدير)", capitalShare: 50000, profitPercentage: 100 }
+    ]);
+    setWithdrawals([]);
+    setCart([]);
+    setStoreInfo({
+      name: "Clean Store",
+      slogan: "جودة - توفير",
+      taxRate: 14
+    });
+    setActiveTab("pos");
   };
 
-  // Actions for Sales & Inventory Stock Deductions
-  const handleCheckout = (newSale) => {
-    // 1. Enrich sale record with logged-in cashier details
+  // Actions for Sales & Inventory Stock Deductions in Supabase
+  const handleCheckout = async (newSale) => {
+    const saleId = newSale.id || "inv-" + Date.now();
+    const cashierName = newSale.cashier || currentUser?.fullName || currentUser?.name || "كاشير المبيعات";
+    
     const enrichedSale = {
       ...newSale,
-      cashier: newSale.cashier || currentUser?.fullName || currentUser?.name || "كاشير المبيعات",
-      cashierUsername: newSale.cashierUsername || currentUser?.username || "cashier",
-      cashierRole: newSale.cashierRole || currentUser?.role || "cashier"
+      id: saleId,
+      invoiceNumber: newSale.invoiceNumber || `INV-${Date.now()}`,
+      cashierId: currentUser?.id || null,
+      cashier: cashierName,
+      totalAmount: newSale.total || newSale.totalAmount || 0,
+      discountAmount: newSale.discount || newSale.discountAmount || 0,
+      items: newSale.items || [],
+      createdAt: new Date().toISOString()
     };
 
-    setSales(prevSales => [enrichedSale, ...prevSales]);
+    // Optimistically update React State
+    setSales(prev => [enrichedSale, ...prev]);
 
-    // 2. Auto-deduct quantities from inventory products
     setProducts(prevProducts => {
       return prevProducts.map(prod => {
         const soldItem = enrichedSale.items.find(item => item.id === prod.id);
         if (soldItem) {
-          const updatedStock = Math.max(0, parseFloat((prod.stock - soldItem.quantity).toFixed(2)));
-          return {
-            ...prod,
-            stock: updatedStock,
-            lastModifiedBy: enrichedSale.cashier,
-            lastModifiedAt: new Date().toISOString()
-          };
+          const updatedStock = Math.max(0, parseFloat((prod.stockQuantity - soldItem.quantity).toFixed(2)));
+          return { ...prod, stockQuantity: updatedStock };
         }
         return prod;
       });
     });
+
+    // Save to Supabase DB & Decrement Stock
+    await createInvoiceInDb(enrichedSale);
   };
 
   // Actions for Product Inventory Management & Purchases
-  const handleAddProduct = (newProduct) => {
-    setProducts(prev => [newProduct, ...prev]);
+  const handleAddProduct = async (newProduct) => {
+    const updated = [newProduct, ...products];
+    setProducts(updated);
+    await saveProductsInDb(updated);
   };
 
-  const handleUpdateProduct = (id, updatedProduct) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
+  const handleUpdateProduct = async (id, updatedProduct) => {
+    const updated = products.map(p => p.id === id ? { ...p, ...updatedProduct } : p);
+    setProducts(updated);
+    await saveProductsInDb(updated);
   };
 
-  const handleDeleteProduct = (id) => {
-    setProducts(prev => prev.filter(p => p.id !== id));
+  const handleDeleteProduct = async (id) => {
+    const updated = products.filter(p => p.id !== id);
+    setProducts(updated);
+    await saveProductsInDb(updated);
   };
 
-  // Handle Recording a Purchase Invoice (تسجيل فاتورة توريد / مشتريات)
-  const handleAddPurchase = (purchaseData) => {
+  const handleAddPurchase = async (purchaseData) => {
     const userLabel = currentUser?.fullName || currentUser?.name || "المدير المسؤول";
     const dateStr = purchaseData.date || new Date().toISOString().split("T")[0];
 
-    // 1. Create Purchase Invoice Record
     const newPurchase = {
       ...purchaseData,
       id: "purch-" + Date.now(),
@@ -292,70 +339,63 @@ export default function App() {
 
     setPurchases(prev => [newPurchase, ...prev]);
 
-    // 2. Automatically increase product's available stock & update unit cost price if modified
-    setProducts(prevProducts =>
-      prevProducts.map(p => {
-        if (p.id === purchaseData.productId) {
-          const updatedStock = parseFloat((p.stock + purchaseData.incomingQty).toFixed(2));
-          const updatedCostPrice = purchaseData.unitCost !== undefined && purchaseData.unitCost !== null && purchaseData.unitCost > 0
-            ? purchaseData.unitCost
-            : p.costPrice;
+    const updatedProducts = products.map(p => {
+      if (p.id === purchaseData.productId) {
+        const updatedStock = parseFloat(((p.stockQuantity || p.stock || 0) + purchaseData.incomingQty).toFixed(2));
+        const updatedCostPrice = purchaseData.unitCost !== undefined && purchaseData.unitCost !== null && purchaseData.unitCost > 0
+          ? purchaseData.unitCost
+          : p.costPrice;
 
-          return {
-            ...p,
-            stock: updatedStock,
-            costPrice: updatedCostPrice,
-            lastModifiedBy: `${userLabel} (فاتورة توريد #${newPurchase.id.slice(-4)})`,
-            lastModifiedAt: new Date().toISOString()
-          };
-        }
-        return p;
-      })
-    );
+        return {
+          ...p,
+          stockQuantity: updatedStock,
+          stock: updatedStock,
+          costPrice: updatedCostPrice
+        };
+      }
+      return p;
+    });
 
-    // 3. Record purchase in Financials/Expenses ledger as cost of inventory
+    setProducts(updatedProducts);
+    await saveProductsInDb(updatedProducts);
+
     const supplierText = purchaseData.supplier ? ` (المورد: ${purchaseData.supplier})` : "";
     const newExpense = {
       id: "exp-purch-" + Date.now(),
+      title: `فاتورة توريد: ${purchaseData.productName} - كمية: ${purchaseData.incomingQty}`,
       category: "مشتريات وتوريد بضاعة",
       amount: purchaseData.totalPaid,
-      date: dateStr,
-      description: `فاتورة توريد: ${purchaseData.productName} - كمية: ${purchaseData.incomingQty} ${purchaseData.unit || ""} - بسعر وحدة: ${purchaseData.unitCost} ج.م${supplierText}`
+      date: dateStr
     };
 
-    setExpenses(prev => [newExpense, ...prev]);
+    await handleAddExpense(newExpense);
   };
 
-  // Handle Stock Adjustment (تسوية جرد / تالف)
-  const handleStockAdjustment = ({ productId, newStock, type, reasonNote }) => {
-    const userLabel = currentUser?.fullName || currentUser?.name || "المدير المسؤول";
+  const handleStockAdjustment = async ({ productId, newStock, type, reasonNote }) => {
+    const updatedProducts = products.map(p => {
+      if (p.id === productId) {
+        return {
+          ...p,
+          stockQuantity: parseFloat(newStock.toFixed(2)),
+          stock: parseFloat(newStock.toFixed(2))
+        };
+      }
+      return p;
+    });
 
-    setProducts(prevProducts =>
-      prevProducts.map(p => {
-        if (p.id === productId) {
-          const reasonText = reasonNote ? `: ${reasonNote}` : "";
-          return {
-            ...p,
-            stock: parseFloat(newStock.toFixed(2)),
-            lastModifiedBy: `${userLabel} (${type}${reasonText})`,
-            lastModifiedAt: new Date().toISOString()
-          };
-        }
-        return p;
-      })
-    );
+    setProducts(updatedProducts);
+    await saveProductsInDb(updatedProducts);
   };
 
-  // Actions for Operational Expenses
-  const handleAddExpense = (newExpense) => {
+  const handleAddExpense = async (newExpense) => {
     setExpenses(prev => [newExpense, ...prev]);
+    await createExpenseInDb(newExpense);
   };
 
   const handleDeleteExpense = (id) => {
     setExpenses(prev => prev.filter(e => e.id !== id));
   };
 
-  // Actions for Partner Profit Withdrawals
   const handleAddWithdrawal = (newWithdrawal) => {
     setWithdrawals(prev => [newWithdrawal, ...prev]);
   };
@@ -364,18 +404,22 @@ export default function App() {
     setWithdrawals(prev => prev.filter(w => w.id !== id));
   };
 
-  // Backup & Restore Actions
-  const handleRestoreData = (restored) => {
-    if (restored.products) setProducts(restored.products);
+  const handleRestoreData = async (restored) => {
+    if (restored.products) {
+      setProducts(restored.products);
+      await saveProductsInDb(restored.products);
+    }
     if (restored.sales) setSales(restored.sales);
     if (restored.expenses) setExpenses(restored.expenses);
     if (restored.purchases) setPurchases(restored.purchases);
-    if (restored.partners) setPartners(restored.partners);
+    if (restored.partners) {
+      setPartners(restored.partners);
+      await savePartnersInDb(restored.partners);
+    }
     if (restored.withdrawals) setWithdrawals(restored.withdrawals);
     if (restored.storeInfo) setStoreInfo(restored.storeInfo);
     if (restored.users && Array.isArray(restored.users)) {
       setUsers(restored.users);
-      saveStoredUsers(restored.users);
     }
   };
 
@@ -397,30 +441,26 @@ export default function App() {
     localStorage.removeItem("cleanstore_withdrawals");
   };
 
-  // Load Sample Demo Data
-  const handleLoadSampleData = () => {
+  const handleLoadSampleData = async () => {
     setProducts(initialProducts);
     setSales(initialSales);
     setExpenses(initialExpenses);
     setPartners(initialPartners);
     setWithdrawals(initialWithdrawals);
+    await saveProductsInDb(initialProducts);
+    await savePartnersInDb(initialPartners);
   };
 
-  // Stock Alert Indicators
-  const lowStockAlerts = products.filter(p => p.stock > 0 && p.stock <= p.reorderThreshold).length;
-  const outOfStockAlerts = products.filter(p => p.stock <= 0).length;
   const initialCapital = partners.reduce((sum, p) => sum + (p.capitalShare || 0), 0);
   const totalWithdrawals = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
 
-  // If user is not logged in, show Arabic Authentication screen
+  // Show Arabic Login / First Time Setup screen if unauthenticated
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
 
-  const isAdmin = currentUser.role === "admin";
-
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-teal-500 selection:text-white">
+    <div className="min-h-screen bg-slate-50 flex flex-col selection:bg-teal-500 selection:text-white dir-rtl" dir="rtl">
 
       {/* HEADER BANNER */}
       <header className="bg-white border-b border-slate-100 sticky top-0 z-40 shadow-sm print:hidden">
@@ -445,21 +485,18 @@ export default function App() {
 
           {/* User Badge & Actions */}
           <div className="flex flex-wrap items-center gap-2.5 text-xs">
-
-            {/* Active User Role Badge */}
             <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl text-slate-700 font-bold text-[11px] border border-slate-200">
-              {isAdmin ? (
+              {isOwner ? (
                 <ShieldCheck size={14} className="text-teal-600" />
               ) : (
                 <UserCheck size={14} className="text-cyan-600" />
               )}
-              <span>{currentUser.fullName || currentUser.name || "المستخدم"}</span>
+              <span>{currentUser.fullName || currentUser.name || currentUser.username}</span>
               <span className="text-[9px] text-slate-400 font-normal">
-                ({isAdmin ? "مدير" : "كاشير"})
+                ({isOwner ? "مالك / شريك" : "كاشير / موظف"})
               </span>
             </div>
 
-            {/* In-App PWA Install Button (Hidden in Standalone Mode) */}
             {!isStandalone && (
               <button
                 type="button"
@@ -473,7 +510,6 @@ export default function App() {
               </button>
             )}
 
-            {/* Logout Button */}
             <button
               type="button"
               onClick={handleLogout}
@@ -483,7 +519,6 @@ export default function App() {
               <LogOut size={13} />
               <span className="hidden sm:inline">خروج</span>
             </button>
-
           </div>
 
         </div>
@@ -492,76 +527,65 @@ export default function App() {
       {/* DASHBOARD LAYOUT CONTROLLER */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex-1 w-full flex flex-col space-y-5 pb-20 md:pb-6">
 
-        {/* DESKTOP TAB NAVIGATION BAR (Filtered by Role) */}
+        {/* DESKTOP TAB NAVIGATION BAR */}
         <nav className="bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm hidden md:flex items-center gap-2 w-fit print:hidden">
-
-          {/* POS Tab - Accessible to both Admin & Cashier */}
-          <button
-            type="button"
-            onClick={() => setActiveTab("pos")}
-            className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "pos"
-              ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-              : "text-slate-600 hover:bg-slate-50"
-              }`}
-          >
-            <ShoppingCart size={16} />
-            سله البيع
-          </button>
-
-          {/* Admin Restricted Tabs */}
-          {isAdmin && (
-            <>
-              <button
-                type="button"
-                onClick={() => setActiveTab("inventory")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "inventory"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <Package size={16} />
-                المخزن والمنتجات
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("financials")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "financials"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <TrendingUp size={16} />
-                المالية والمصروفات
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("partners")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "partners"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <Users size={16} />
-                حسابات الشركاء
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveTab("settings")}
-                className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "settings"
-                  ? "bg-teal-600 text-white shadow-md shadow-teal-100"
-                  : "text-slate-600 hover:bg-slate-50"
-                  }`}
-              >
-                <Settings size={16} />
-                {isAdmin ? "النسخ الاحتياطي والإعدادات" : "حسابي الشخصي والإعدادات"}
-              </button>
-            </>
+          {userAllowedTabs.includes("pos") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("pos")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "pos"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <ShoppingCart size={16} />
+              سلة البيع
+            </button>
           )}
 
-          {!isAdmin && (
+          {userAllowedTabs.includes("inventory") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("inventory")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "inventory"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <Package size={16} />
+              المخزن والمنتجات
+            </button>
+          )}
+
+          {userAllowedTabs.includes("financials") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("financials")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "financials"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <TrendingUp size={16} />
+              المالية والمصروفات
+            </button>
+          )}
+
+          {userAllowedTabs.includes("partners") && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("partners")}
+              className={`py-2 px-4 rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 transition-all cursor-pointer ${activeTab === "partners"
+                ? "bg-teal-600 text-white shadow-md shadow-teal-100"
+                : "text-slate-600 hover:bg-slate-50"
+                }`}
+            >
+              <Users size={16} />
+              حسابات الشركاء
+            </button>
+          )}
+
+          {userAllowedTabs.includes("settings") && (
             <button
               type="button"
               onClick={() => setActiveTab("settings")}
@@ -571,15 +595,14 @@ export default function App() {
                 }`}
             >
               <Settings size={16} />
-              الإعدادات
+              النسخ الاحتياطي والإعدادات
             </button>
           )}
-
         </nav>
 
         {/* ACTIVE TAB CONTAINER */}
         <main className="flex-1">
-          {activeTab === "pos" && (
+          {userAllowedTabs.includes("pos") && activeTab === "pos" && (
             <PosTab
               products={products}
               onCheckout={handleCheckout}
@@ -590,7 +613,7 @@ export default function App() {
             />
           )}
 
-          {isAdmin && activeTab === "inventory" && (
+          {userAllowedTabs.includes("inventory") && activeTab === "inventory" && (
             <InventoryTab
               products={products}
               purchases={purchases}
@@ -604,7 +627,7 @@ export default function App() {
             />
           )}
 
-          {isAdmin && activeTab === "financials" && (
+          {userAllowedTabs.includes("financials") && activeTab === "financials" && (
             <FinancialsTab
               sales={sales}
               expenses={expenses}
@@ -616,10 +639,13 @@ export default function App() {
             />
           )}
 
-          {isAdmin && activeTab === "partners" && (
+          {userAllowedTabs.includes("partners") && activeTab === "partners" && (
             <PartnersTab
               partners={partners}
-              setPartners={setPartners}
+              setPartners={async (newPartners) => {
+                setPartners(newPartners);
+                await savePartnersInDb(newPartners);
+              }}
               withdrawals={withdrawals}
               onAddWithdrawal={handleAddWithdrawal}
               onDeleteWithdrawal={handleDeleteWithdrawal}
@@ -628,7 +654,7 @@ export default function App() {
             />
           )}
 
-          {activeTab === "settings" && (
+          {userAllowedTabs.includes("settings") && activeTab === "settings" && (
             <SettingsTab
               products={products}
               sales={sales}
@@ -638,33 +664,37 @@ export default function App() {
               storeInfo={storeInfo}
               currentUser={currentUser}
               users={users}
-              onAddUser={(newUserPayload) => {
-                const res = registerUser(newUserPayload);
+              onAddUser={async (newUserPayload) => {
+                const res = await registerUserInDb(newUserPayload);
                 if (res.success) {
-                  setUsers(getStoredUsers(false));
+                  const updatedUsers = await fetchUsers();
+                  setUsers(updatedUsers);
                 }
                 return res;
               }}
-              onUpdateUser={(userId, updates) => {
-                const res = updateStoredUser(userId, updates);
+              onUpdateUser={async (userId, updates) => {
+                const res = await updateUserInDb(userId, updates);
                 if (res.success) {
-                  setUsers(getStoredUsers(false));
+                  const updatedUsers = await fetchUsers();
+                  setUsers(updatedUsers);
                   if (currentUser && currentUser.id === userId) {
-                    const updatedCurrent = { ...currentUser, ...updates };
+                    const updatedCurrent = { ...currentUser, ...res.user };
                     setCurrentUser(updatedCurrent);
                     setActiveSession(updatedCurrent, true);
                   }
                 }
                 return res;
               }}
-              onDeleteUser={(userId) => {
-                const res = deleteStoredUser(userId, currentUser?.id);
+              onDeleteUser={async (userId) => {
+                const res = await deleteUserFromDb(userId, currentUser?.id);
                 if (res.success) {
                   setUsers(res.remainingUsers);
                 }
                 return res;
               }}
+              onRefreshCloudData={loadAllDataFromDb}
               onDeleteSelfAccount={handleDeleteSelfAccount}
+              onHandoverReset={handleHandoverReset}
               onUpdateStoreInfo={setStoreInfo}
               onRestoreData={handleRestoreData}
               onResetAllData={handleResetAllData}
@@ -675,66 +705,65 @@ export default function App() {
 
       </div>
 
-      {/* MOBILE BOTTOM STICKY NAVIGATION BAR (Role Aware) */}
+      {/* MOBILE BOTTOM NAVIGATION BAR */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 px-2 py-1.5 shadow-lg flex items-center justify-around print:hidden">
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("pos")}
-          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "pos" ? "text-teal-600" : "text-slate-500"
-            }`}
-        >
-          <ShoppingCart size={18} />
-          <span>نقاط البيع</span>
-        </button>
-
-        {isAdmin && (
-          <>
-            <button
-              type="button"
-              onClick={() => setActiveTab("inventory")}
-              className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "inventory" ? "text-teal-600" : "text-slate-500"
-                }`}
-            >
-              <Package size={18} />
-              <span>المخزن</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("financials")}
-              className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "financials" ? "text-teal-600" : "text-slate-500"
-                }`}
-            >
-              <TrendingUp size={18} />
-              <span>المالية</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab("partners")}
-              className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "partners" ? "text-teal-600" : "text-slate-500"
-                }`}
-            >
-              <Users size={18} />
-              <span>الشركاء</span>
-            </button>
-          </>
+        {userAllowedTabs.includes("pos") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("pos")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "pos" ? "text-teal-600" : "text-slate-500"}`}
+          >
+            <ShoppingCart size={18} />
+            <span>سلة البيع</span>
+          </button>
         )}
 
-        <button
-          type="button"
-          onClick={() => setActiveTab("settings")}
-          className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "settings" ? "text-teal-600" : "text-slate-500"
-            }`}
-        >
-          <Settings size={18} />
-          <span>{isAdmin ? "الإعدادات" : "حسابي"}</span>
-        </button>
+        {userAllowedTabs.includes("inventory") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("inventory")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "inventory" ? "text-teal-600" : "text-slate-500"}`}
+          >
+            <Package size={18} />
+            <span>المخزن</span>
+          </button>
+        )}
 
+        {userAllowedTabs.includes("financials") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("financials")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "financials" ? "text-teal-600" : "text-slate-500"}`}
+          >
+            <TrendingUp size={18} />
+            <span>المالية</span>
+          </button>
+        )}
+
+        {userAllowedTabs.includes("partners") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("partners")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "partners" ? "text-teal-600" : "text-slate-500"}`}
+          >
+            <Users size={18} />
+            <span>الشركاء</span>
+          </button>
+        )}
+
+        {userAllowedTabs.includes("settings") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("settings")}
+            className={`flex flex-col items-center py-1 px-2 rounded-xl text-[10px] font-black transition-colors ${activeTab === "settings" ? "text-teal-600" : "text-slate-500"}`}
+          >
+            <Settings size={18} />
+            <span>الإعدادات</span>
+          </button>
+        )}
       </div>
 
-      {/* APPLICATION FOOTER */}
+      {/* FOOTER */}
       <footer className="w-full bg-white border-t border-slate-100 py-3 px-4 text-center mt-auto print:hidden">
         <div className="max-w-7xl mx-auto flex items-center justify-center gap-2 text-xs text-slate-500 font-semibold">
           <img
@@ -744,7 +773,7 @@ export default function App() {
           />
           <span className="font-bold text-slate-700">{storeInfo.name}</span>
           <span className="text-slate-300">•</span>
-          <span>{storeInfo.slogan || "جودة - توفير "}</span>
+          <span>{storeInfo.slogan || "جودة - توفير"}</span>
         </div>
       </footer>
 
