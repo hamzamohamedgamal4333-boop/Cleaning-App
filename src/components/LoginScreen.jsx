@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import {
-  Sparkles,
   Lock,
   User,
   Eye,
@@ -11,38 +10,31 @@ import {
   Loader2,
   ShieldCheck,
   Store,
-  UserCheck,
-  CheckSquare,
-  Wifi
+  UserCheck
 } from "lucide-react";
 import {
-  getStoredUsers,
   hasStoreOwner,
-  registerFirstOwner,
-  authenticateUser
+  registerFirstOwner
 } from "../utils/authStorage";
 import {
-  fetchUsers,
   hasOwnerInDb,
-  registerOwnerInDb
+  registerOwnerInDb,
+  authenticateUserInDb
 } from "../services/dbService";
 import { isSupabaseConfigured } from "../lib/supabase";
 
 export default function LoginScreen({ onLogin }) {
   // Check if owner exists in local storage / DB
   const [ownerExists, setOwnerExists] = useState(() => hasStoreOwner());
-  const [users, setUsers] = useState(() => getStoredUsers(false));
   const [loadingDb, setLoadingDb] = useState(true);
 
-  // Load users and check DB owner state on mount
+  // Check DB owner state on mount
   useEffect(() => {
     let isMounted = true;
     async function loadAuthContext() {
       try {
-        const fetchedUsers = await fetchUsers();
         const dbHasOwner = await hasOwnerInDb();
         if (isMounted) {
-          setUsers(fetchedUsers);
           setOwnerExists(dbHasOwner || hasStoreOwner());
         }
       } catch (err) {
@@ -57,9 +49,6 @@ export default function LoginScreen({ onLogin }) {
 
   const isFirstTimeSetup = !ownerExists;
 
-  // Selected User Card for Password Login
-  const [selectedUserCard, setSelectedUserCard] = useState(null);
-
   // Form States: First Time Setup
   const [setupStoreName, setSetupStoreName] = useState("Clean Store");
   const [setupOwnerFullName, setSetupOwnerFullName] = useState("");
@@ -69,7 +58,7 @@ export default function LoginScreen({ onLogin }) {
   const [showSetupPassword, setShowSetupPassword] = useState(false);
   const [showSetupConfirmPassword, setShowSetupConfirmPassword] = useState(false);
 
-  // Form States: Normal Login
+  // Form States: Standard Credentials Login
   const [loginIdentifier, setLoginIdentifier] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -84,15 +73,6 @@ export default function LoginScreen({ onLogin }) {
     setError(msg);
     setShake(true);
     setTimeout(() => setShake(false), 500);
-  };
-
-  const getUserInitials = (name) => {
-    if (!name) return "م";
-    const parts = name.trim().split(" ");
-    if (parts.length >= 2) {
-      return (parts[0][0] + parts[1][0]).toUpperCase();
-    }
-    return name.slice(0, 2).toUpperCase();
   };
 
   // Handle First-Time Store Setup Submission
@@ -158,64 +138,38 @@ export default function LoginScreen({ onLogin }) {
     }
   };
 
-  // Handle Credentials Login Submit
+  // Handle Standard Credentials Login Submit
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setSuccessMessage("");
 
-    const cleanId = loginIdentifier.trim().toLowerCase();
+    const cleanId = loginIdentifier.trim();
     const cleanPass = loginPassword.trim();
 
-    if (!cleanId) {
-      triggerError("يرجى إدخال اسم المستخدم أو البريد الإلكتروني.");
-      return;
-    }
-    if (!cleanPass) {
-      triggerError("يرجى إدخال كلمة المرور.");
+    if (!cleanId || !cleanPass) {
+      triggerError("اسم المستخدم أو كلمة المرور غير صحيحة");
       return;
     }
 
     setLoading(true);
 
     try {
-      // Re-fetch latest users list to check credentials
-      const currentUsers = await fetchUsers();
-      const foundUser = currentUsers.find(u => {
-        const matchUser = u.username && u.username.toLowerCase() === cleanId;
-        const matchEmail = u.email && u.email.toLowerCase() === cleanId;
-        return (matchUser || matchEmail) && (u.password === cleanPass || u.password_hash === cleanPass);
-      });
-
+      const result = await authenticateUserInDb(cleanId, cleanPass);
       setLoading(false);
 
-      if (foundUser) {
-        setSuccessMessage(`أهلاً بك مجدداً ${foundUser.fullName || foundUser.username}!`);
+      if (result.success && result.user) {
+        setSuccessMessage(`أهلاً بك مجدداً ${result.user.fullName || result.user.username}!`);
         setTimeout(() => {
-          onLogin(foundUser);
+          onLogin(result.user);
         }, 300);
       } else {
-        // Fallback to local authStorage check
-        const localResult = authenticateUser(cleanId, cleanPass);
-        if (localResult.success) {
-          setSuccessMessage(`أهلاً بك مجدداً ${localResult.user.fullName || localResult.user.username}!`);
-          setTimeout(() => {
-            onLogin(localResult.user);
-          }, 300);
-        } else {
-          triggerError("بيانات الدخول غير صحيحة. يرجى التأكد من اسم المستخدم وكلمة المرور.");
-        }
+        triggerError("اسم المستخدم أو كلمة المرور غير صحيحة");
       }
     } catch (err) {
       setLoading(false);
-      triggerError("حدث خطأ أثناء التحقق من البيانات.");
+      triggerError("اسم المستخدم أو كلمة المرور غير صحيحة");
     }
-  };
-
-  const handleCardClick = (user) => {
-    setLoginIdentifier(user.username);
-    setSelectedUserCard(user);
-    setError("");
   };
 
   return (
@@ -232,7 +186,7 @@ export default function LoginScreen({ onLogin }) {
         {/* Light Card Container */}
         <div className="w-full bg-white border border-slate-100 rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col relative">
 
-          {/* Header (Logo & Store Info) */}
+          {/* Header (Logo & Store Info & Cloud Status Badge) */}
           <div className="flex flex-col items-center text-center mb-6">
             <img
               src="/icons/icon-192.png"
@@ -271,7 +225,7 @@ export default function LoginScreen({ onLogin }) {
           {loadingDb ? (
             <div className="py-12 flex flex-col items-center justify-center space-y-3 text-slate-400">
               <Loader2 size={28} className="animate-spin text-teal-600" />
-              <p className="text-xs font-semibold">جاري التحقق من الحسابات...</p>
+              <p className="text-xs font-semibold">جاري التحقق من حالة النظام...</p>
             </div>
           ) : isFirstTimeSetup ? (
             /* MODE 1: FIRST TIME STORE SETUP FLOW */
@@ -424,7 +378,7 @@ export default function LoginScreen({ onLogin }) {
               </form>
             </div>
           ) : (
-            /* MODE 2: EXISTING ACCOUNTS LOGIN ONLY */
+            /* MODE 2: CLEAN PRIVATE CREDENTIALS LOGIN ONLY */
             <div className="flex flex-col space-y-4">
               <div className="border-b border-slate-100 pb-3 text-center">
                 <h2 className="text-base font-black text-slate-800 flex items-center justify-center gap-2">
@@ -432,57 +386,15 @@ export default function LoginScreen({ onLogin }) {
                   <span>تسجيل الدخول للنظام</span>
                 </h2>
                 <p className="text-[11px] text-slate-400 font-semibold mt-1">
-                  اختر حسابك أو أدخل اسم المستخدم وكلمة المرور للدخول
+                  أدخل اسم المستخدم وكلمة المرور للوصول إلى حسابك
                 </p>
               </div>
 
-              {/* Registered Accounts Cards */}
-              {users.length > 0 && (
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  <p className="text-[11px] font-bold text-slate-400 text-right">الحسابات المسجلة بالمحل:</p>
-                  {users.map((u) => {
-                    const isOwnerRole = u.role === "owner" || u.role === "admin";
-                    const isSelected = selectedUserCard && selectedUserCard.id === u.id;
-
-                    return (
-                      <div
-                        key={u.id || u.username}
-                        onClick={() => handleCardClick(u)}
-                        className={`w-full p-3 rounded-2xl border transition-all duration-200 cursor-pointer flex items-center gap-3 ${isSelected
-                          ? "bg-teal-50/80 border-teal-500 shadow-sm"
-                          : "bg-slate-50 hover:bg-teal-50/40 border-slate-200 hover:border-teal-300"
-                          }`}
-                      >
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs text-white shrink-0 shadow-xs ${isOwnerRole ? "bg-gradient-to-tr from-teal-600 to-emerald-500" : "bg-gradient-to-tr from-cyan-600 to-sky-500"
-                          }`}>
-                          {getUserInitials(u.fullName || u.username)}
-                        </div>
-
-                        <div className="flex-1 text-right">
-                          <div className="font-black text-xs text-slate-800">
-                            {u.fullName || u.username}
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-semibold mt-0.5 flex items-center gap-1">
-                            <span>{isOwnerRole ? "مالك / شريك" : "كاشير / موظف"}</span>
-                            <span>•</span>
-                            <span className="font-mono text-slate-500">@{u.username}</span>
-                          </div>
-                        </div>
-
-                        <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${isSelected ? "bg-teal-600 text-white" : "bg-white text-slate-300 border border-slate-200"
-                          }`}>
-                          {isSelected ? <CheckSquare size={14} /> : <User size={14} />}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* Login Credentials Form */}
               <form onSubmit={handleLoginSubmit} className="space-y-3.5 pt-1">
+                {/* Field 1: Username */}
                 <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-600 text-right">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
                     اسم المستخدم:
                   </label>
                   <div className="relative flex items-center">
@@ -500,8 +412,9 @@ export default function LoginScreen({ onLogin }) {
                   </div>
                 </div>
 
+                {/* Field 2: Password with Eye Toggle */}
                 <div className="space-y-1">
-                  <label className="block text-xs font-bold text-slate-600 text-right">
+                  <label className="block text-xs font-bold text-slate-700 text-right">
                     كلمة المرور:
                   </label>
                   <div className="relative flex items-center">
@@ -510,9 +423,8 @@ export default function LoginScreen({ onLogin }) {
                     </div>
                     <input
                       type={showLoginPassword ? "text" : "password"}
-                      value={showLoginPassword ? "text" : "password"} // Fixed standard input bind
-                      onChange={(e) => setLoginPassword(e.target.value)}
                       value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
                       placeholder="••••••••"
                       className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 focus:border-teal-500 focus:bg-white rounded-2xl text-slate-800 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/20 transition-all font-mono text-right"
                       required
@@ -521,12 +433,14 @@ export default function LoginScreen({ onLogin }) {
                       type="button"
                       onClick={() => setShowLoginPassword(!showLoginPassword)}
                       className="absolute left-3.5 text-slate-400 hover:text-teal-600 transition-colors cursor-pointer"
+                      title={showLoginPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
                     >
                       {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
 
+                {/* Primary Teal Login Button */}
                 <button
                   type="submit"
                   disabled={loading}
@@ -546,9 +460,6 @@ export default function LoginScreen({ onLogin }) {
                 </button>
               </form>
 
-              <div className="pt-2 text-center text-[10px] text-slate-400 font-semibold">
-                🔒 الحسابات تُدار حصرياً من قبل مالك المتجر في قسم الإعدادات.
-              </div>
             </div>
           )}
 

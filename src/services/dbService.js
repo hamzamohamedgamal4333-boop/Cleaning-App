@@ -44,6 +44,54 @@ export async function hasOwnerInDb() {
   return users.some(u => u.role === "owner" || u.role === "admin");
 }
 
+export async function authenticateUserInDb(username, password) {
+  const cleanUser = (username || "").trim().toLowerCase();
+  const cleanPass = (password || "").trim();
+  const genericError = "اسم المستخدم أو كلمة المرور غير صحيحة";
+
+  if (!cleanUser || !cleanPass) {
+    return { success: false, error: genericError };
+  }
+
+  if (isSupabaseConfigured()) {
+    try {
+      const { data, error } = await supabase
+        .from("users")
+        .select("*")
+        .ilike("username", cleanUser)
+        .eq("password_hash", cleanPass);
+
+      if (!error && data && data.length > 0) {
+        const u = data[0];
+        const userObj = {
+          id: u.id,
+          username: u.username,
+          password: u.password_hash,
+          fullName: u.full_name || u.username,
+          role: u.role,
+          permissions: u.permissions || (u.role === "owner" || u.role === "admin" ? ["pos", "inventory", "financials", "partners", "settings"] : ["pos"]),
+          createdAt: u.created_at
+        };
+        return { success: true, user: userObj };
+      }
+    } catch (err) {
+      console.error("Supabase authentication exception:", err);
+    }
+  }
+
+  const localUsers = getStoredUsers(false);
+  const foundLocal = localUsers.find(u => {
+    const matchUser = u.username && u.username.toLowerCase() === cleanUser;
+    return matchUser && (u.password === cleanPass || u.password_hash === cleanPass);
+  });
+
+  if (foundLocal) {
+    return { success: true, user: foundLocal };
+  }
+
+  return { success: false, error: genericError };
+}
+
 export async function registerOwnerInDb({ storeName, ownerFullName, username, password }) {
   const cleanUser = (username || "").trim();
   const cleanName = (ownerFullName || cleanUser).trim();
